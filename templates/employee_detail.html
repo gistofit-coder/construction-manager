@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}{{ emp.first_name }} {{ emp.last_name }} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}{{ emp.first_name }} {{ emp.last_name }}{% endblock %}
+{% block breadcrumb %}
+  <a href="/">Home</a> / <a href="/employees">Employees</a> / {{ emp.first_name }} {{ emp.last_name }}
+{% endblock %}
+
+{% block content %}
+<div class="grid-2" style="align-items:start">
+  <!-- Left: Info card -->
+  <div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">👷 Employee #{{ emp.emp_id }}</span>
+        <div class="card-actions">
+          <a href="/employees/{{ emp.emp_id }}/edit" class="btn btn-outline btn-sm">✏️ Edit</a>
+        </div>
+      </div>
+      <div class="card-body">
+        <table style="width:100%">
+          {% macro row(label, value) %}
+          <tr>
+            <td class="text-dim" style="padding:4px 0;width:130px;font-size:11px">{{ label }}</td>
+            <td style="padding:4px 0">{% if value %}{{ value }}{% else %}<span class="text-dim">—</span>{% endif %}</td>
+          </tr>
+          {% endmacro %}
+          {{ row('Employee ID', emp.emp_id) }}
+          <tr>
+            <td class="text-dim" style="padding:4px 0;font-size:11px">Status</td>
+            <td style="padding:4px 0">
+              <span class="badge badge-{% if emp.status=='Active' %}green{% else %}gray{% endif %}">
+                {{ emp.status }}
+              </span>
+            </td>
+          </tr>
+          {{ row('Occupation', emp.occupation) }}
+          {{ row('Hire Date', emp.hire_date) }}
+          {{ row('Phone', emp.phone) }}
+          {{ row('Email', emp.email) }}
+          {{ row('Address', emp.address) }}
+        </table>
+        {% if emp.notes %}
+        <hr class="dim">
+        <p class="text-dim" style="font-size:11px">{{ emp.notes }}</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- YTD Summary -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">📊 {{ year }} YTD Summary</span></div>
+      <div class="card-body">
+        <div class="kpi-grid" style="grid-template-columns:1fr 1fr">
+          <div class="kpi-tile">
+            <div class="kpi-label">YTD Gross Pay</div>
+            <div class="kpi-value" style="font-size:18px;color:var(--text-bright)">${{ '{:,.2f}'.format(ytd.ytd_gross or 0) }}</div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">YTD Net Pay</div>
+            <div class="kpi-value" style="font-size:18px;color:var(--green)">${{ '{:,.2f}'.format(ytd.ytd_net or 0) }}</div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">SS Withheld</div>
+            <div class="kpi-value" style="font-size:16px">${{ '{:,.2f}'.format(ytd.ytd_ss or 0) }}</div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">Medicare Withheld</div>
+            <div class="kpi-value" style="font-size:16px">${{ '{:,.2f}'.format(ytd.ytd_medicare or 0) }}</div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">Fed Withheld</div>
+            <div class="kpi-value" style="font-size:16px">${{ '{:,.2f}'.format(ytd.ytd_fed or 0) }}</div>
+          </div>
+          <div class="kpi-tile accent">
+            <div class="kpi-label">YTD Hours</div>
+            <div class="kpi-value" style="font-size:18px">{{ '{:,.1f}'.format(ytd_hours) }}</div>
+          </div>
+        </div>
+
+        <!-- SS wage base progress -->
+        {% set ss_cap = 176100 %}
+        {% set ytd_gross = ytd.ytd_gross or 0 %}
+        {% set ss_pct = [ytd_gross / ss_cap * 100, 100] | min %}
+        <hr class="dim">
+        <div class="flex-center gap-8" style="margin-bottom:6px">
+          <span class="text-dim" style="font-size:11px">SS Wage Base Progress</span>
+          <span class="mono" style="font-size:11px;margin-left:auto">
+            ${{ '{:,.0f}'.format(ytd_gross) }} / ${{ '{:,.0f}'.format(ss_cap) }}
+          </span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill {% if ss_pct > 90 %}red{% elif ss_pct > 70 %}yellow{% else %}green{% endif %}"
+               style="width:{{ ss_pct | round(1) }}%"></div>
+        </div>
+        <div class="text-dim" style="font-size:10px;margin-top:4px">
+          ${{ '{:,.0f}'.format([ss_cap - ytd_gross, 0] | max) }} remaining before SS cap
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Rates + Recent Timesheet -->
+  <div>
+    <!-- Rate History -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">💰 Pay Rate History</span>
+        <div class="card-actions">
+          <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-rate')">+ Add Rate</button>
+        </div>
+      </div>
+      <div class="card-body no-pad">
+        {% if rates %}
+        <table>
+          <thead>
+            <tr>
+              <th>Effective Date</th>
+              <th style="text-align:right">Bill Rate/hr</th>
+              <th style="text-align:right">Cost Rate/hr</th>
+              <th style="text-align:right">Margin</th>
+              <th>Notes</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rates %}
+            <tr {% if loop.first %}style="background:var(--accent-dim)"{% endif %}>
+              <td class="mono">
+                {{ r.effective_date }}
+                {% if loop.first %}<span class="badge badge-green" style="margin-left:4px">Current</span>{% endif %}
+              </td>
+              <td class="amount text-green">${{ '{:.2f}'.format(r.bill_rate_per_hour) }}</td>
+              <td class="amount">${{ '{:.2f}'.format(r.cost_rate_per_hour) }}</td>
+              <td class="amount">
+                {% if r.bill_rate_per_hour > 0 %}
+                  {% set margin = (r.bill_rate_per_hour - r.cost_rate_per_hour) / r.bill_rate_per_hour * 100 %}
+                  <span class="{% if margin > 30 %}text-green{% elif margin > 15 %}text-yellow{% else %}text-red{% endif %}">
+                    {{ '{:.1f}'.format(margin) }}%
+                  </span>
+                {% else %}—{% endif %}
+              </td>
+              <td class="dim">{{ r.notes or '—' }}</td>
+              <td>
+                <form method="POST" action="/employees/rates/{{ r.id }}/delete"
+                      onsubmit="return confirm('Delete this rate record?')">
+                  <button type="submit" class="btn btn-danger btn-xs">Del</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+          <p>No rates yet. <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-rate')">Add Rate</button></p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Rate Lookup Tool -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">🔍 Rate Lookup (by Date)</span></div>
+      <div class="card-body">
+        <div class="flex gap-8" style="align-items:flex-end">
+          <div class="form-group" style="flex:1;margin:0">
+            <label>Enter Date</label>
+            <input type="date" id="rate-lookup-date" value="{{ '' }}">
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="lookupRate()">Look Up</button>
+        </div>
+        <div id="rate-lookup-result" class="mt-8" style="display:none">
+          <div class="alert alert-info" style="margin:0">
+            On <strong id="result-date"></strong>:
+            Bill <strong id="result-bill" class="text-green"></strong>/hr,
+            Cost <strong id="result-cost"></strong>/hr
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Timesheet -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">⏱ Recent Timesheet</span>
+        <div class="card-actions">
+          <a href="/timesheet?emp_id={{ emp.emp_id }}" class="btn btn-outline btn-xs">View All</a>
+        </div>
+      </div>
+      <div class="card-body no-pad">
+        {% if recent_ts %}
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Job</th><th style="text-align:right">Hours</th>
+                <th style="text-align:right">Bill Amt</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            {% for t in recent_ts %}
+            <tr>
+              <td class="mono dim">{{ t.entry_date }}</td>
+              <td>{% if t.job_code %}<span class="badge badge-blue">{{ t.job_code }}</span>{% else %}—{% endif %}</td>
+              <td class="amount">{{ t.hours }}</td>
+              <td class="amount text-green">${{ '{:.2f}'.format(t.bill_amount) }}</td>
+              <td class="dim" style="max-width:150px;overflow:hidden;text-overflow:ellipsis">{{ t.description or '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state"><p>No timesheet entries yet.</p></div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Rate Modal -->
+<div class="modal-overlay" id="modal-add-rate">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <h3>Add Pay Rate — {{ emp.first_name }} {{ emp.last_name }}</h3>
+      <button class="modal-close" onclick="closeModal('modal-add-rate')">×</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="/employees/{{ emp.emp_id }}/rates/add"
+            class="form-grid" style="grid-template-columns:1fr 1fr">
+        <div class="form-group full">
+          <label>Effective Date <span class="req">*</span>
+            <span class="tip">Rate applies from this date forward</span>
+          </label>
+          <input type="date" name="effective_date" required>
+        </div>
+        <div class="form-group">
+          <label>Bill Rate / Hour <span class="req">*</span>
+            <span class="tip">What clients pay</span>
+          </label>
+          <input type="number" step="0.01" name="bill_rate_per_hour"
+                 placeholder="75.00" required id="modal-bill">
+        </div>
+        <div class="form-group">
+          <label>Cost Rate / Hour
+            <span class="tip">Your payroll cost</span>
+          </label>
+          <input type="number" step="0.01" name="cost_rate_per_hour"
+                 placeholder="45.00" id="modal-cost">
+        </div>
+        <div class="form-group full" id="modal-margin-preview" style="display:none">
+          <div class="alert alert-info" style="margin:0;font-size:11px">
+            Margin: <strong id="modal-margin-pct"></strong>
+            (<span id="modal-margin-amt"></span>/hr profit)
+          </div>
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <input type="text" name="notes" placeholder="e.g. Annual raise Jan 2025">
+        </div>
+        <div class="form-group full">
+          <button type="submit" class="btn btn-primary">💾 Save Rate</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Rate lookup tool
+function lookupRate() {
+  const date = document.getElementById('rate-lookup-date').value;
+  if (!date) { showToast('Enter a date', 'error'); return; }
+  fetch(`/api/employees/{{ emp.emp_id }}/rate-on-date?date=${date}`)
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById('rate-lookup-result').style.display = 'block';
+      document.getElementById('result-date').textContent = date;
+      document.getElementById('result-bill').textContent = '$' + (d.bill_rate || 0).toFixed(2);
+      document.getElementById('result-cost').textContent = '$' + (d.cost_rate || 0).toFixed(2);
+    });
+}
+
+// Modal margin calculator
+const mBill = document.getElementById('modal-bill');
+const mCost = document.getElementById('modal-cost');
+const mPreview = document.getElementById('modal-margin-preview');
+function updateModalMargin() {
+  const bill = parseFloat(mBill.value) || 0;
+  const cost = parseFloat(mCost.value) || 0;
+  if (bill > 0 && cost > 0) {
+    mPreview.style.display = 'block';
+    const pct = ((bill - cost) / bill * 100).toFixed(1);
+    document.getElementById('modal-margin-pct').textContent = pct + '%';
+    document.getElementById('modal-margin-amt').textContent = '$' + (bill - cost).toFixed(2);
+  } else {
+    mPreview.style.display = 'none';
+  }
+}
+mBill.addEventListener('input', updateModalMargin);
+mCost.addEventListener('input', updateModalMargin);
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
+});
+</script>
+{% endblock %}

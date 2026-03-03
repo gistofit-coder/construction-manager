@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if cert else 'Add' }} Certificate — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📜 {{ 'Edit' if cert else 'Add' }} Certificate{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/certs">Certs Tracker</a> / {{ 'Edit' if cert else 'Add' }} Certificate{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:680px">
+  <div class="card-header"><span class="card-title">{{ 'Edit' if cert else 'New' }} Certificate</span></div>
+  <div class="card-body">
+    <form method="POST">
+
+      <div class="form-grid form-grid-2" style="margin-bottom:14px">
+
+        <div class="form-group">
+          <label>Contractor <span class="req">*</span></label>
+          <select name="contractor_id" required>
+            <option value="">— Select Contractor —</option>
+            {% for con in contractors %}
+            <option value="{{ con.id }}"
+              {% if cert and cert.contractor_id == con.id %}selected{% elif prefill_contractor == con.id|string %}selected{% endif %}>
+              {{ con.company_name }}{% if con.trade_type %} ({{ con.trade_type }}){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+          <div class="field-hint">Don't see them? <a href="/contractors/new" target="_blank">Add contractor →</a></div>
+        </div>
+
+        <div class="form-group">
+          <label>Certificate Type <span class="req">*</span></label>
+          <select name="cert_type" required>
+            <option value="">— Select Type —</option>
+            {% for ct in cert_types %}
+            <option value="{{ ct }}" {% if cert and cert.cert_type == ct %}selected{% endif %}>{{ ct }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Effective / Start Date</label>
+          <input type="date" name="start_date"
+                 value="{{ cert.start_date if cert else '' }}">
+        </div>
+
+        <div class="form-group">
+          <label>Expiration Date <span class="req">*</span></label>
+          <input type="date" name="end_date"
+                 value="{{ cert.end_date if cert else '' }}" required>
+          {% if cert and cert.end_date %}
+          {% set today_str = today %}
+          <div class="field-hint" id="expiryHint"></div>
+          {% endif %}
+        </div>
+
+        <div class="form-group">
+          <label>Certificate File Name <span class="tip">(for reference)</span></label>
+          <input type="text" name="cert_filename" placeholder="e.g. acme_coi_2025.pdf"
+                 value="{{ cert.cert_filename if cert else '' }}">
+          <div class="field-hint">Filename only — upload files via your file system</div>
+        </div>
+
+        <div class="form-group">
+          <label>Company Name on Cert <span class="tip">(if different from contractor)</span></label>
+          <input type="text" name="company_name" placeholder="As printed on certificate"
+                 value="{{ cert.company_name if cert else '' }}">
+        </div>
+
+        <div class="form-group full">
+          <label>Notes</label>
+          <textarea name="notes" rows="3"
+                    placeholder="Policy number, coverage amounts, broker info…">{{ cert.notes if cert else '' }}</textarea>
+        </div>
+
+      </div>
+
+      <div class="flex gap-8">
+        <button type="submit" class="btn btn-primary">{{ '💾 Save Changes' if cert else '+ Add Certificate' }}</button>
+        <a href="/certs" class="btn btn-outline">Cancel</a>
+        {% if cert %}
+        <button type="button" class="btn btn-danger btn-sm" style="margin-left:auto"
+                onclick="if(confirm('Delete this certificate?')) { fetch('/api/certs/{{ cert.id }}/delete',{method:'POST'}).then(()=>location.href='/certs') }">
+          🗑 Delete
+        </button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Show days until expiry on edit form
+const endInput = document.querySelector('input[name="end_date"]');
+const hint     = document.getElementById('expiryHint');
+if (endInput && hint) {
+  function updateHint() {
+    const val = endInput.value;
+    if (!val) { hint.textContent = ''; return; }
+    const end  = new Date(val + 'T00:00:00');
+    const today = new Date(); today.setHours(0,0,0,0);
+    const days = Math.round((end - today) / 86400000);
+    if (days < 0)      hint.textContent = `⚠️ Expired ${Math.abs(days)} days ago`;
+    else if (days <= 30) hint.textContent = `🔴 Expires in ${days} days`;
+    else if (days <= 60) hint.textContent = `🟡 Expires in ${days} days`;
+    else                 hint.textContent = `✅ Expires in ${days} days`;
+  }
+  endInput.addEventListener('change', updateHint);
+  updateHint();
+}
+</script>
+{% endblock %}

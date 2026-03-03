@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Projects — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block scripts %}
+<script>
+function openJobFolder(jobCode) {
+  fetch('/api/job-folder-path?job_code=' + encodeURIComponent(jobCode))
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { showToast('❌ ' + data.error, 'error'); return; }
+      if (!data.exists) {
+        if (!confirm('Folder not found:\n' + data.path + '\n\nCreate it?')) return;
+      }
+      fetch('/api/open-folder', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({path: data.path})
+      }).then(r => r.json()).then(d => { if (d.error) showToast('❌ ' + d.error, 'error'); });
+    }).catch(() => showToast('Could not reach server', 'error'));
+}
+
+async function patchJobStatus(jobId, newStatus, btn) {
+  const r = await fetch(`/jobs/${jobId}/patch`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({field: 'status', value: newStatus})
+  });
+  const d = await r.json();
+  if (d.success) {
+    showToast(`Status → ${newStatus}`, 'success');
+    setTimeout(() => location.reload(), 400);
+  } else {
+    showToast(d.error || 'Failed', 'error');
+  }
+}
+</script>
+{% endblock %}
+{% block topbar_title %}🏗️ Projects{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Projects{% endblock %}
+
+{% block content %}
+<style>
+.health-bar { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; margin-top: 3px; width: 80px; }
+.health-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+.dot-Active    { background: #22c55e; }
+.dot-Bidding   { background: #6366f1; }
+.dot-Archived  { background: #9ca3af; }
+.dot-Cancelled { background: #ef4444; }
+.milestone-badge { padding: 1px 6px; border-radius: 8px; font-size: 10px; background: var(--orange,#f59e0b); color: #fff; font-weight: 600; }
+</style>
+
+<div class="section-header">
+  <h2>Jobs & Projects</h2>
+  <div class="actions">
+    <a href="/jobs/new" class="btn btn-primary">+ New Job</a>
+  </div>
+</div>
+
+<!-- Filter bar -->
+<div class="card" style="margin-bottom:14px">
+  <div class="card-body" style="padding:12px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="flex:1;min-width:180px;margin:0">
+        <label>Search</label>
+        <input type="search" name="q" value="{{ q }}" placeholder="Job code, description, client…">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Status</label>
+        <select name="status">
+          <option value="All">All</option>
+          <option value="Active"    {% if status_filter=='Active'    %}selected{% endif %}>Active</option>
+          <option value="Bidding"   {% if status_filter=='Bidding'   %}selected{% endif %}>Bidding</option>
+          <option value="Archived"  {% if status_filter=='Archived'  %}selected{% endif %}>Archived</option>
+          <option value="Cancelled" {% if status_filter=='Cancelled' %}selected{% endif %}>Cancelled</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if q or status_filter not in ('', 'Active') %}
+        <a href="/jobs" class="btn btn-outline btn-sm">Clear</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">{{ total }} job{{ 's' if total != 1 }}</span>
+  </div>
+  <div class="card-body no-pad">
+    {% if jobs %}
+    <div class="table-wrap" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr style="font-size:11px;color:var(--text-dim)">
+            <th>Job Code</th>
+            <th>Client</th>
+            <th>Description</th>
+            <th>Status</th>
+            <th>Start → End</th>
+            <th style="text-align:right">Contract</th>
+            <th style="text-align:right">Cost</th>
+            <th style="text-align:right">Invoiced</th>
+            <th style="text-align:right">AR</th>
+            <th style="text-align:right">Margin</th>
+            <th style="text-align:right">Hours</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for j in jobs %}
+          {% set cost = j.total_cost or 0 %}
+          {% set contract = j.contract_amount or 0 %}
+          {% set budget   = j.budget_amount or 0 %}
+          {% set margin   = ((contract - cost) / contract * 100) if contract > 0 else none %}
+          {% set budget_pct = (cost / budget * 100) if budget > 0 else none %}
+          <tr>
+            <td>
+              <a href="/jobs/{{ j.id }}" style="text-decoration:none">
+                <span class="badge badge-blue" style="font-size:11px">{{ j.job_code }}</span>
+              </a>
+              {% if j.pending_milestones %}
+                <span class="milestone-badge" title="{{ j.pending_milestones }} pending milestone(s)">{{ j.pending_milestones }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if j.client_name %}
+                <a href="/clients/{{ j.client_id }}" style="color:var(--text);text-decoration:none;font-size:12px">{{ j.client_name }}</a>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px"
+                title="{{ j.description }}">{{ j.description or '—' }}</td>
+            <td>
+              <!-- Inline status dropdown -->
+              <div class="dropdown" style="position:relative;display:inline-block">
+                <button class="btn btn-xs btn-outline" style="padding:2px 7px;font-size:11px"
+                        onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+                  <span class="status-dot dot-{{ j.status }}"></span>{{ j.status }} ▾
+                </button>
+                <div style="display:none;position:absolute;left:0;top:100%;background:var(--surface);
+                     border:1px solid var(--border);border-radius:6px;z-index:50;min-width:110px;padding:4px 0;
+                     box-shadow:0 4px 12px rgba(0,0,0,.2)">
+                  {% for s in ['Active','Bidding','Archived','Cancelled'] %}
+                  {% if s != j.status %}
+                  <div onclick="patchJobStatus({{ j.id }},'{{ s }}',this);this.closest('.dropdown').querySelector('div').style.display='none'"
+                       style="padding:6px 12px;cursor:pointer;font-size:12px"
+                       onmouseover="this.style.background='var(--accent-dim)'"
+                       onmouseout="this.style.background=''">
+                    <span class="status-dot dot-{{ s }}"></span>{{ s }}
+                  </div>
+                  {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+            </td>
+            <td style="font-family:monospace;font-size:11px;white-space:nowrap">
+              {{ j.start_date or '—' }}
+              {% if j.end_date %} → {{ j.end_date }}{% endif %}
+            </td>
+            <td style="text-align:right;font-family:monospace;font-size:12px">
+              {% if contract %}<span class="text-accent">${{ '{:,.0f}'.format(contract) }}</span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td style="text-align:right;font-family:monospace;font-size:12px">
+              {% if cost %}
+                <span style="color:{% if budget_pct and budget_pct > 100 %}var(--red,#ef4444){% elif budget_pct and budget_pct > 85 %}var(--orange,#f59e0b){% else %}var(--text){% endif %}">
+                  ${{ '{:,.0f}'.format(cost) }}
+                </span>
+                {% if budget_pct %}
+                <div class="health-bar"><div class="health-fill"
+                  style="width:{{ [budget_pct, 100]|min }}%;background:{% if budget_pct > 100 %}var(--red,#ef4444){% elif budget_pct > 85 %}var(--orange,#f59e0b){% else %}var(--green,#22c55e){% endif %}">
+                </div></div>
+                {% endif %}
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td style="text-align:right;font-family:monospace;font-size:12px">
+              {% if j.total_invoiced %}<span>${{ '{:,.0f}'.format(j.total_invoiced) }}</span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td style="text-align:right;font-family:monospace;font-size:12px">
+              {% if j.ar_outstanding and j.ar_outstanding > 0 %}
+                <span style="color:var(--orange,#f59e0b)">${{ '{:,.0f}'.format(j.ar_outstanding) }}</span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td style="text-align:right;font-family:monospace;font-size:12px">
+              {% if margin is not none %}
+                <span style="color:{% if margin >= 20 %}var(--green,#22c55e){% elif margin >= 10 %}var(--orange,#f59e0b){% else %}var(--red,#ef4444){% endif %}">
+                  {{ '{:.1f}'.format(margin) }}%
+                </span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td style="text-align:right;font-size:12px">
+              {% if j.total_hours %}{{ '{:.1f}'.format(j.total_hours) }}h
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td style="white-space:nowrap">
+              <a href="/jobs/{{ j.id }}" class="btn btn-outline btn-xs" title="View dashboard">📊</a>
+              <a href="/jobs/{{ j.id }}/edit" class="btn btn-outline btn-xs">Edit</a>
+              <a href="/jobs/{{ j.id }}/export-csv" class="btn btn-outline btn-xs" title="Export costs CSV">⬇</a>
+              <button class="btn btn-outline btn-xs" title="Open project folder"
+                      onclick="openJobFolder('{{ j.job_code }}')">📁</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pages > 1 %}
+    <div class="flex gap-8" style="padding:12px;justify-content:center">
+      {% if page > 1 %}<a href="?page={{ page-1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">← Prev</a>{% endif %}
+      <span class="text-dim" style="align-self:center">Page {{ page }} of {{ pages }}</span>
+      {% if page < pages %}<a href="?page={{ page+1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">Next →</a>{% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="empty-state">
+      <div class="icon">🏗️</div>
+      {% if q %}<p>No jobs matching "{{ q }}"</p>
+      {% else %}<p>No jobs yet. <a href="/jobs/new" class="text-accent">Create your first job →</a></p>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

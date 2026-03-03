@@ -1,0 +1,951 @@
+{% extends "base.html" %}
+{% block title %}Settings — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}Settings{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Settings{% endblock %}
+
+{% block content %}
+<div class="tabs" id="settings-tabs">
+  <a class="tab active" onclick="switchTab('company')" id="tab-company">Company</a>
+  <a class="tab" onclick="switchTab('taxes')" id="tab-taxes">Tax Rates</a>
+  <a class="tab" onclick="switchTab('accounts')" id="tab-accounts">Bank Accounts</a>
+  <a class="tab" onclick="switchTab('categories')" id="tab-categories">Categories</a>
+  <a class="tab" onclick="switchTab('tools')" id="tab-tools">Tools</a>
+  <a class="tab" onclick="switchTab('data')" id="tab-data">Data Management</a>
+</div>
+
+<!-- COMPANY TAB -->
+<div class="tab-pane active" id="pane-company">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🏢 Company Information</span>
+    </div>
+    <div class="card-body">
+      <form action="/settings/company" method="POST">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Company Name <span class="req">*</span></label>
+            <input type="text" name="company_name" value="{{ config.company_name or '' }}"
+                   placeholder="Acme Construction Co." required>
+          </div>
+          <div class="form-group">
+            <label>Owner Name</label>
+            <input type="text" name="owner_name" value="{{ config.owner_name or '' }}"
+                   placeholder="John Smith">
+          </div>
+          <div class="form-group full">
+            <label>Address</label>
+            <input type="text" name="address" value="{{ config.address or '' }}"
+                   placeholder="123 Main St">
+          </div>
+          <div class="form-group">
+            <label>City, State, ZIP</label>
+            <input type="text" name="city_state_zip" value="{{ config.city_state_zip or '' }}"
+                   placeholder="Springfield, IL 62701">
+          </div>
+          <div class="form-group">
+            <label>Phone</label>
+            <input type="tel" name="phone" value="{{ config.phone or '' }}"
+                   placeholder="(555) 555-5555">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" name="email" value="{{ config.email or '' }}"
+                   placeholder="info@company.com">
+          </div>
+          <div class="form-group">
+            <label>Website</label>
+            <input type="url" name="website" value="{{ config.website or '' }}"
+                   placeholder="https://company.com">
+          </div>
+          <div class="form-group">
+            <label>License Number</label>
+            <input type="text" name="license_number" value="{{ config.license_number or '' }}"
+                   placeholder="IL-GC-12345">
+          </div>
+          <div class="form-group">
+            <label>EIN <span class="tip">(Federal Employer ID)</span></label>
+            <input type="text" name="ein" value="{{ config.ein or '' }}"
+                   placeholder="12-3456789">
+          </div>
+          <div class="form-group">
+            <label>Payroll Year</label>
+            <input type="number" name="payroll_year" value="{{ config.payroll_year or 2025 }}"
+                   min="2020" max="2030">
+          </div>
+        </div>
+
+        <hr class="dim">
+        <div class="section-header"><h2>📁 File Paths</h2></div>
+        <div class="form-grid">
+          <div class="form-group full">
+            <label>Receipts Folder <span class="tip">Where receipt files are stored</span></label>
+            <input type="text" name="receipts_folder_path"
+                   value="{{ config.receipts_folder_path or '' }}"
+                   placeholder="C:/Business/Receipts">
+            <div class="field-hint">PDF receipts must be in this folder for verification to work.</div>
+          </div>
+          <div class="form-group full">
+            <label>Certs Folder <span class="tip">Where contractor COI / certificate PDFs are stored</span></label>
+            <input type="text" name="certs_folder_path"
+                   value="{{ config.certs_folder_path or '' }}"
+                   placeholder="C:/Business/Certs">
+            <div class="field-hint">PDF certs in this folder will be matched against cert records by filename.</div>
+          </div>
+          <div class="form-group full">
+            <label>Invoices Folder</label>
+            <input type="text" name="invoices_folder_path"
+                   value="{{ config.invoices_folder_path or '' }}"
+                   placeholder="C:/Business/Invoices">
+          </div>
+          <div class="form-group full">
+            <label>Backup Folder <span class="tip">ZIP backups saved here on shutdown</span></label>
+            <input type="text" name="backup_folder_path"
+                   value="{{ config.backup_folder_path or '' }}"
+                   placeholder="C:/Business/Backups">
+            <div class="field-hint">Each backup is a .zip containing: database + all receipt PDFs + all cert PDFs. Manual backups are kept forever; auto-backups are pruned to the limit below.</div>
+          </div>
+          </div>
+          <div class="form-group full">
+            <label>Active Jobs Folder</label>
+            <input type="text" name="active_jobs_folder_path"
+                   value="{{ config.active_jobs_folder_path or '' }}"
+                   placeholder="C:/Business/ActiveJobs">
+          </div>
+	  <div class="form-group full">
+            <label>Receipt Auto-Naming Format <span class="tip">How receipt filenames are generated</span></label>
+            <div style="font-family:monospace;font-size:12px;background:var(--surface);padding:8px 12px;border-radius:4px;border:1px solid var(--border);color:var(--text)">
+              YYYY-MM-DD.JobCode.VendorName.Amount.pdf
+            </div>
+            <div class="field-hint">
+              Example: <code id="receipt-name-preview">2026-03-01.KB001.Comcast.44.00.pdf</code>
+              — Date, job code (if any), vendor name (alphanumeric only, 20 chars max), amount with 2 decimal places.
+              Spaces and special characters are stripped from vendor name.
+            </div>
+          </div>
+	  <div class="form-group">
+            <label>Keep Auto-Backups <span class="tip">(backups to retain)</span></label>
+            <input type="number" name="backup_keep_count" min="1" max="365"
+                   value="{{ config.backup_keep_count or 30 }}" style="width:80px">
+            <div class="field-hint">Older auto-backups are deleted automatically</div>
+          </div>
+          <div class="form-group">
+            <label>Continuous Scroll</label>
+            <label class="toggle-switch">
+              <input type="checkbox" name="continuous_scroll" value="1"
+                     {% if config.continuous_scroll %}checked{% endif %}
+                     onchange="this.form.querySelector('[name=continuous_scroll_hidden]').value = this.checked ? 1 : 0">
+              <span class="toggle-slider"></span>
+            </label>
+            <div class="field-hint">Infinite scroll instead of pagination in Ledger, Invoices, Receipts</div>
+            <input type="hidden" name="continuous_scroll" value="{{ config.continuous_scroll or 0 }}">
+          </div>
+          <div class="form-group">
+            <label>Program Time Clock
+              <span class="tip">Track time spent using this app (accounting, admin, etc.)</span>
+            </label>
+            <label class="toggle-switch">
+              <input type="checkbox" name="time_tracker_enabled" value="1"
+                     {% if config.time_tracker_enabled %}checked{% endif %}
+                     onchange="this.form.querySelector('[name=time_tracker_hidden]').value = this.checked ? 1 : 0">
+              <span class="toggle-slider"></span>
+            </label>
+            <div class="field-hint">Logs session start/end times. View log at <a href="/timeclock">Time Clock Log</a></div>
+            <input type="hidden" name="time_tracker_enabled" id="time_tracker_hidden" value="{{ config.time_tracker_enabled or 0 }}">
+        </div>
+
+        <div class="mt-12 flex gap-8">
+          <button type="submit" class="btn btn-primary">💾 Save Company Settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- TAXES TAB -->
+<div class="tab-pane" id="pane-taxes">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">📊 Payroll Tax Rates</span>
+    </div>
+    <div class="card-body">
+      <form action="/settings/company" method="POST">
+        <div class="form-grid form-grid-3">
+          <div class="form-group">
+            <label>FICA Employee Rate</label>
+            <input type="number" step="0.0001" name="fica_rate_employee"
+                   value="{{ config.fica_rate_employee or 0.062 }}">
+            <div class="field-hint">Standard: 0.0620 (6.2%)</div>
+          </div>
+          <div class="form-group">
+            <label>FICA Employer Rate</label>
+            <input type="number" step="0.0001" name="fica_rate_employer"
+                   value="{{ config.fica_rate_employer or 0.062 }}">
+          </div>
+          <div class="form-group">
+            <label>Medicare Employee</label>
+            <input type="number" step="0.0001" name="medicare_rate_employee"
+                   value="{{ config.medicare_rate_employee or 0.0145 }}">
+            <div class="field-hint">Standard: 0.0145 (1.45%)</div>
+          </div>
+          <div class="form-group">
+            <label>Medicare Employer</label>
+            <input type="number" step="0.0001" name="medicare_rate_employer"
+                   value="{{ config.medicare_rate_employer or 0.0145 }}">
+          </div>
+          <div class="form-group">
+            <label>FUTA Rate</label>
+            <input type="number" step="0.0001" name="futa_rate"
+                   value="{{ config.futa_rate or 0.006 }}">
+            <div class="field-hint">Standard: 0.0060 (net of credit)</div>
+          </div>
+          <div class="form-group">
+            <label>FUTA Wage Base</label>
+            <input type="number" step="0.01" name="futa_wage_base"
+                   value="{{ config.futa_wage_base or 7000 }}">
+            <div class="field-hint">Standard: $7,000</div>
+          </div>
+          <div class="form-group">
+            <label>SUTA Rate (IL)</label>
+            <input type="number" step="0.0001" name="suta_rate_il"
+                   value="{{ config.suta_rate_il or 0.035 }}">
+          </div>
+          <div class="form-group">
+            <label>SUTA Wage Base (IL)</label>
+            <input type="number" step="0.01" name="suta_wage_base_il"
+                   value="{{ config.suta_wage_base_il or 13590 }}">
+          </div>
+          <div class="form-group">
+            <label>Prior Year Withholding Carryforward</label>
+            <input type="number" step="0.01" name="prior_year_withholding_carryforward"
+                   value="{{ config.prior_year_withholding_carryforward or 0 }}">
+          </div>
+          <div class="form-group">
+            <label>Prior Year Trade Adjustment</label>
+            <input type="number" step="0.01" name="prior_year_trade_adjustment"
+                   value="{{ config.prior_year_trade_adjustment or 0 }}">
+          </div>
+        </div>
+        <div class="mt-12 flex gap-8">
+          <button type="submit" class="btn btn-primary">💾 Save Tax Rates</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- SS Wage Caps -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">📋 Social Security Wage Caps</span>
+      <div class="card-actions">
+        <button class="btn btn-outline btn-sm" onclick="openModal('modal-ss-cap')">+ Add Year</button>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      <table>
+        <thead><tr><th>Year</th><th style="text-align:right">Wage Cap</th><th>IRS Source</th></tr></thead>
+        <tbody>
+          {% for cap in ss_caps %}
+          <tr>
+            <td class="mono">{{ cap.year }}</td>
+            <td class="amount">${{ '{:,.0f}'.format(cap.cap_amount) }}</td>
+            <td class="dim">{{ cap.irs_source or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- BANK ACCOUNTS TAB -->
+<div class="tab-pane" id="pane-accounts">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🏦 Bank Accounts</span>
+      <div class="card-actions">
+        <button class="btn btn-primary btn-sm" onclick="resetBankModal()">+ Add Account</button>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      {% if bank_accounts %}
+        <table>
+          <thead>
+            <tr><th>Account Name</th><th>Type</th><th>Institution</th><th>Last 4</th>
+                <th style="text-align:right">Balance</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for acct in bank_accounts %}
+            <tr>
+              <td class="text-bright">{{ acct.account_name }}</td>
+              <td><span class="badge badge-blue">{{ acct.account_type }}</span></td>
+              <td>{{ acct.institution_name or '—' }}</td>
+              <td class="mono">•••• {{ acct.last_four or '—' }}</td>
+              <td class="amount">${{ '{:,.2f}'.format(acct.current_balance) }}</td>
+              <td>
+                <button class="btn btn-outline btn-xs" data-acct='{{ acct | tojson }}'
+                        onclick="editBankAcct(this)">Edit</button>
+                <button class="btn btn-danger btn-xs"
+                        onclick="if(confirm('Delete this account?')){document.getElementById('del-bank-{{ acct.id }}').submit()}" style="margin-left:4px">🗑</button>
+                <form id="del-bank-{{ acct.id }}" method="POST" action="/settings/bank-account/{{ acct.id }}/delete" style="display:none"></form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state">
+          <div class="icon">🏦</div>
+          <p>No bank accounts configured. <button class="btn btn-primary btn-sm" onclick="resetBankModal()">Add Account</button></p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- CATEGORIES TAB -->
+<div class="tab-pane" id="pane-categories">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🏷 Work Categories</span>
+      <div class="card-actions">
+        <button class="btn btn-primary btn-sm" onclick="resetCategoryModal()">+ Add Category</button>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Category Name</th><th>COGS</th><th>Tax Ded.</th><th>Transfer/Equity</th><th>Schedule C</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for cat in categories %}
+            <tr>
+              <td class="text-bright">{{ cat.category_name }}</td>
+              <td style="text-align:center">{{ '✓' if cat.is_cogs else '' }}</td>
+              <td style="text-align:center">{{ '✓' if cat.is_tax_deductible else '' }}</td>
+              <td style="text-align:center">
+                {% if cat.is_transfer %}
+                  <span class="badge badge-yellow" style="font-size:10px">XFER</span>
+                {% endif %}
+              </td>
+              <td class="dim">{{ cat.schedule_c_line or '—' }}</td>
+              <td>
+                <button class="btn btn-outline btn-xs" data-cat='{{ cat | tojson }}'
+                        onclick="editCategory(this)">Edit</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- VENDOR MAPPING TAB -->
+<!-- TOOLS TAB -->
+<div class="tab-pane" id="pane-tools">
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">💾 Automatic Database Backup</span>
+        <div class="card-actions">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="auto-backup-toggle"
+                   {% if config.auto_backup_enabled != 0 %}checked{% endif %}
+                   onchange="saveAutoBackupToggle(this)">
+            Auto-backup on shutdown
+          </label>
+        </div>
+      </div>
+      <div class="card-body">
+        <p class="text-dim" style="margin-bottom:12px;font-size:12px">
+          Creates a ZIP of: database + all receipt PDFs + all cert PDFs. Runs automatically on shutdown.
+          Configure folder and retention in Company Settings.
+        </p>
+        <div class="flex gap-8" style="margin-bottom:14px">
+          <form action="/settings/backup" method="POST">
+            <button type="submit" class="btn btn-primary">📦 Backup Now</button>
+          </form>
+          <button class="btn btn-outline" onclick="loadBackupHistory()">📋 Past Backups</button>
+        </div>
+        <div id="backupHistoryPanel" style="display:none">
+          <div class="text-dim" style="font-size:11px;margin-bottom:6px">Past backups:</div>
+          <div id="backupHistoryList" style="font-size:11px;max-height:240px;overflow-y:auto"></div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">✅ Verify Receipts</span></div>
+      <div class="card-body">
+        <p class="text-dim" style="margin-bottom:12px;font-size:12px">
+          Scans all ledger entries with receipt filenames and verifies they exist on disk.
+          Updates the ✅/⚠️ indicator in the Ledger.
+        </p>
+        <form action="/settings/verify-receipts" method="POST">
+          <button type="submit" class="btn btn-outline">🔍 Verify All Receipts</button>
+        </form>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">📜 Verify Cert Files</span></div>
+      <div class="card-body">
+        <p class="text-dim" style="margin-bottom:12px;font-size:12px">
+          Scans all certificate records with filenames and checks they exist in the Certs Folder.
+          Updates the ✅/⚠️ indicator in the Certs Tracker.
+        </p>
+        <button class="btn btn-outline" onclick="verifyCerts(this)">🔍 Verify All Cert Files</button>
+        <div id="certVerifyResult" style="margin-top:8px;font-size:12px"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">📥 Import from Workbook</span></div>
+      <div class="card-body">
+        <p class="text-dim" style="margin-bottom:12px;font-size:12px">
+          Migrate data from your existing LibreOffice/Excel workbook (.ODS or .XLSX).
+          Guided wizard with preview, validation, and error correction.
+        </p>
+        <a href="/settings/import" class="btn btn-primary">🧙 Launch Import Wizard</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">ℹ️ System Info</span></div>
+      <div class="card-body">
+        <table style="width:100%">
+          <tr><td class="text-dim" style="padding:4px 0">Database</td><td class="mono text-bright">{{ db_name }}</td></tr>
+          <tr><td class="text-dim" style="padding:4px 0">App Version</td><td>Phase 1 — Foundation</td></tr>
+          <tr><td class="text-dim" style="padding:4px 0">Phase</td><td>1 of 10</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODALS ===== -->
+
+<!-- SS Cap Modal -->
+<div class="modal-overlay" id="modal-ss-cap">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h3>Add SS Wage Cap</h3>
+      <button class="modal-close" onclick="closeModal('modal-ss-cap')">×</button>
+    </div>
+    <div class="modal-body">
+      <form action="/settings/ss-cap" method="POST" class="form-grid" style="grid-template-columns:1fr">
+        <div class="form-group">
+          <label>Year <span class="req">*</span></label>
+          <input type="number" name="year" placeholder="2026" min="2020" max="2035" required>
+        </div>
+        <div class="form-group">
+          <label>Cap Amount <span class="req">*</span></label>
+          <input type="number" step="100" name="cap_amount" placeholder="168600" required>
+        </div>
+        <div class="form-group">
+          <label>IRS Source</label>
+          <input type="text" name="irs_source" placeholder="IRS Notice 2025-xx">
+        </div>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Bank Account Modal -->
+<div class="modal-overlay" id="modal-bank-acct">
+  <div class="modal" style="max-width:450px">
+    <div class="modal-header">
+      <h3 id="bank-modal-title">Add Bank Account</h3>
+      <button class="modal-close" onclick="closeModal('modal-bank-acct')">×</button>
+    </div>
+    <div class="modal-body">
+      <form action="/settings/bank-account" method="POST" class="form-grid" style="grid-template-columns:1fr 1fr">
+        <input type="hidden" name="id" id="bank-acct-id">
+        <div class="form-group full">
+          <label>Account Name <span class="req">*</span></label>
+          <input type="text" name="account_name" id="bank-acct-name"
+                 placeholder="Operating Checking" required>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select name="account_type" id="bank-acct-type">
+            <option>Checking</option>
+            <option>Savings</option>
+            <option>CreditCard</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Institution</label>
+          <input type="text" name="institution_name" id="bank-acct-inst" placeholder="Chase Bank">
+        </div>
+        <div class="form-group">
+          <label>Last 4 Digits</label>
+          <input type="text" name="last_four" id="bank-acct-last4" maxlength="4" placeholder="1234">
+        </div>
+        <div class="form-group">
+          <label>Current Balance</label>
+          <input type="number" step="0.01" name="current_balance" id="bank-acct-bal" value="0.00">
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <textarea name="notes" id="bank-acct-notes" rows="2"></textarea>
+        </div>
+        <div class="form-group full">
+          <button type="submit" class="btn btn-primary">💾 Save Account</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Category Modal -->
+<div class="modal-overlay" id="modal-category">
+  <div class="modal" style="max-width:450px">
+    <div class="modal-header">
+      <h3 id="cat-modal-title">Add Category</h3>
+      <button class="modal-close" onclick="closeModal('modal-category')">×</button>
+    </div>
+    <div class="modal-body">
+      <form action="/settings/category" method="POST" class="form-grid" style="grid-template-columns:1fr">
+        <input type="hidden" name="id" id="cat-id">
+        <div class="form-group">
+          <label>Category Name <span class="req">*</span></label>
+          <input type="text" name="category_name" id="cat-name" required>
+        </div>
+        <div class="form-group">
+          <label>Schedule C Line</label>
+          <input type="text" name="schedule_c_line" id="cat-sch-c" placeholder="Line 22">
+        </div>
+        <div class="check-group">
+          <input type="checkbox" name="is_cogs" id="cat-cogs" value="1">
+          <label for="cat-cogs">Is Cost of Goods Sold (COGS)</label>
+        </div>
+        <div class="check-group">
+          <input type="checkbox" name="is_tax_deductible" id="cat-deduct" value="1" checked>
+          <label for="cat-deduct">Is Tax Deductible</label>
+        </div>
+        <div class="check-group">
+          <input type="checkbox" name="is_transfer" id="cat-transfer" value="1">
+          <label for="cat-transfer">
+            Is Transfer / Equity
+            <span style="display:block;font-size:10px;color:var(--text-dim);margin-top:2px">
+              Excludes this category from P&amp;L income/expense totals (e.g. CC payments, owner draws, capital contributions)
+            </span>
+          </label>
+        </div>
+        <button type="submit" class="btn btn-primary">💾 Save Category</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- DATA MANAGEMENT TAB -->
+<div class="tab-pane" id="pane-data">
+
+  <!-- Selective Backup Card -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+      <span class="card-title">💾 Selective Backup</span>
+      <button class="btn btn-primary btn-sm" onclick="runSelectiveBackup()">⬇ Create Backup ZIP</button>
+    </div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+        Choose exactly which data goes into this backup ZIP. Each selected table is exported as a CSV
+        inside the ZIP alongside the database file and/or PDF attachments.
+      </p>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="bk-db" checked style="accent-color:var(--accent)">
+          <strong>Database file</strong> (.db — full restore capability)
+        </label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="bk-receipts" style="accent-color:var(--accent)">
+          Receipt PDFs
+        </label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="bk-certs" style="accent-color:var(--accent)">
+          COI / Cert PDFs
+        </label>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Tables to include as CSV exports:</div>
+      <div id="bk-table-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:5px;margin-bottom:10px">
+        <!-- populated by JS -->
+      </div>
+      <div id="bk-status" style="font-size:12px;color:var(--accent);margin-top:4px;min-height:18px"></div>
+    </div>
+  </div>
+
+  <!-- Per-Table Management Card -->
+  <div class="card">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+      <span class="card-title">🗂 Table Data Management</span>
+      <button class="btn btn-outline btn-sm" onclick="loadTableStats()">↺ Refresh Counts</button>
+    </div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+        Export any table to CSV, import/replace from CSV, soft-delete (clear) all rows, or restore deleted rows.
+        A backup is automatically created before any destructive operation.
+      </p>
+      <div id="data-table-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:10px">
+        <div style="font-size:12px;color:var(--text-dim)">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ─────────────────────────────────────────────
+//  Settings tab switching
+// ─────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('pane-' + name).classList.add('active');
+  window.location.hash = name;
+  if (name === 'data') loadTableStats();
+}
+
+window.addEventListener('load', () => {
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get('tab') || window.location.hash.slice(1);
+  if (tab && document.getElementById('pane-' + tab)) switchTab(tab);
+  else if (document.getElementById('pane-data')?.classList.contains('active')) loadTableStats();
+});
+
+// ─────────────────────────────────────────────
+//  Bank / Category / Vendor modal helpers
+// ─────────────────────────────────────────────
+function resetBankModal() {
+  document.getElementById('bank-modal-title').textContent = 'Add Bank Account';
+  document.getElementById('bank-acct-id').value = '';
+  document.getElementById('bank-acct-name').value = '';
+  document.getElementById('bank-acct-type').value = 'Checking';
+  document.getElementById('bank-acct-inst').value = '';
+  document.getElementById('bank-acct-last4').value = '';
+  document.getElementById('bank-acct-bal').value = '0.00';
+  document.getElementById('bank-acct-notes').value = '';
+  openModal('modal-bank-acct');
+}
+function editBankAcct(btn) {
+  const acct = JSON.parse(btn.dataset.acct);
+  document.getElementById('bank-modal-title').textContent = 'Edit Bank Account';
+  document.getElementById('bank-acct-id').value = acct.id || '';
+  document.getElementById('bank-acct-name').value = acct.account_name || '';
+  document.getElementById('bank-acct-type').value = acct.account_type || 'Checking';
+  document.getElementById('bank-acct-inst').value = acct.institution_name || '';
+  document.getElementById('bank-acct-last4').value = acct.last_four || '';
+  document.getElementById('bank-acct-bal').value = acct.current_balance || 0;
+  document.getElementById('bank-acct-notes').value = acct.notes || '';
+  openModal('modal-bank-acct');
+}
+function resetCategoryModal() {
+  document.getElementById('cat-modal-title').textContent = 'Add Category';
+  document.getElementById('cat-id').value = '';
+  document.getElementById('cat-name').value = '';
+  document.getElementById('cat-sch-c').value = '';
+  document.getElementById('cat-cogs').checked = false;
+  document.getElementById('cat-deduct').checked = true;
+  document.getElementById('cat-transfer').checked = false;
+  openModal('modal-category');
+}
+function editCategory(btn) {
+  const cat = JSON.parse(btn.dataset.cat);
+  document.getElementById('cat-modal-title').textContent = 'Edit Category';
+  document.getElementById('cat-id').value = cat.id || '';
+  document.getElementById('cat-name').value = cat.category_name || '';
+  document.getElementById('cat-sch-c').value = cat.schedule_c_line || '';
+  document.getElementById('cat-cogs').checked = cat.is_cogs == 1;
+  document.getElementById('cat-deduct').checked = cat.is_tax_deductible == 1;
+  document.getElementById('cat-transfer').checked = cat.is_transfer == 1;
+  openModal('modal-category');
+}
+
+
+async function verifyCerts(btn) {
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  const r = await fetch('/api/certs/verify-all', {method:'POST'});
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = '🔍 Verify All Cert Files';
+  if (d.success) {
+    document.getElementById('certVerifyResult').textContent =
+      `✅ Checked ${d.checked} cert records against: ${d.folder || '(folder not configured)'}`;
+    showToast('Cert verification complete', 'success');
+  } else {
+    document.getElementById('certVerifyResult').textContent = `❌ ${d.error}`;
+  }
+}
+
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.classList.remove('open');
+  });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+});
+
+// ─────────────────────────────────────────────
+//  Backup history / restore
+// ─────────────────────────────────────────────
+async function loadBackupHistory() {
+  const panel = document.getElementById('backupHistoryPanel');
+  const list  = document.getElementById('backupHistoryList');
+  panel.style.display = 'block';
+  list.innerHTML = '<span class="text-dim">Loading…</span>';
+  const r = await fetch('/api/backup/list');
+  const d = await r.json();
+  if (!d.backups || !d.backups.length) {
+    list.innerHTML = '<span class="text-dim">No backups found.</span>'; return;
+  }
+  list.innerHTML = d.backups.map(b =>
+    `<div style="padding:6px 0;border-bottom:1px solid var(--border)">
+       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+         <span class="mono" style="font-size:11px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.name}</span>
+         <span class="text-dim" style="white-space:nowrap;font-size:10px">${b.size_mb} MB · ${b.created}</span>
+         <div style="display:flex;gap:4px;flex-shrink:0">
+           <button class="btn btn-xs btn-outline" onclick="showRestoreDialog('${b.path}','${b.name}')">⬆ Restore</button>
+           <button class="btn btn-xs btn-danger" onclick="deleteBackup('${b.path}','${b.name}',this)">🗑</button>
+         </div>
+       </div>
+     </div>`
+  ).join('');
+}
+
+async function deleteBackup(path, name, btn) {
+  if (!confirm(`Delete backup?\n${name}\n\nThis cannot be undone.`)) return;
+  btn.disabled = true;
+  const r = await fetch('/api/backup/delete', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({path})
+  });
+  const d = await r.json();
+  if (d.success) {
+    btn.closest('div[style]').remove();
+    showToast('Backup deleted', 'success');
+  } else {
+    alert('Delete failed: ' + (d.error || 'unknown error'));
+    btn.disabled = false;
+  }
+}
+
+async function saveAutoBackupToggle(cb) {
+  const fd = new FormData();
+  fd.append('auto_backup_enabled', cb.checked ? '1' : '0');
+  await fetch('/settings/company', {method:'POST', body: fd});
+  showToast(cb.checked ? 'Auto-backup enabled' : 'Auto-backup disabled', 'success');
+}
+
+function showRestoreDialog(zipPath, zipName) {
+  const TABLES = ['ledger','clients','contractors','certificates','timesheet','invoices','jobs',
+                  'employees','payroll_runs','bank_accounts','work_categories'];
+  const checks = TABLES.map(t =>
+    `<label style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:12px">
+       <input type="checkbox" value="${t}" checked> ${t}
+     </label>`).join('');
+  document.body.insertAdjacentHTML('beforeend',
+    `<div id="restore-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center">
+      <div style="background:var(--card);border-radius:8px;padding:24px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto">
+        <h3 style="font-size:15px;font-weight:700;margin-bottom:8px">⬆ Restore from Backup</h3>
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+          <strong>${zipName}</strong><br>Select tables to restore. Current data will be replaced.<br>A rescue backup is created first.
+        </p>
+        <div style="border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:12px">${checks}</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('restore-modal').remove()">Cancel</button>
+          <button class="btn btn-danger btn-sm" onclick="doRestore('${zipPath}')">⬆ Restore Selected</button>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function doRestore(zipPath) {
+  const modal = document.getElementById('restore-modal');
+  const tables = Array.from(modal.querySelectorAll('input:checked')).map(cb => cb.value);
+  if (!tables.length) { alert('No tables selected.'); return; }
+  if (!confirm(`Restore ${tables.length} table(s)?\nThis replaces current data. A rescue backup is saved first.`)) return;
+  const btn = modal.querySelector('button:last-child');
+  btn.textContent = 'Restoring…'; btn.disabled = true;
+  const r = await fetch('/api/backup/restore', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({zip_path: zipPath, tables})
+  });
+  const d = await r.json();
+  modal.remove();
+  if (d.success) { alert('✅ ' + d.message); location.reload(); }
+  else alert('❌ Restore failed: ' + (d.error || 'Unknown'));
+}
+
+// ─────────────────────────────────────────────
+//  DATA MANAGEMENT TAB
+// ─────────────────────────────────────────────
+const DM_TABLES = {
+  ledger:            '📒 Ledger Entries',
+  clients:           '👤 Clients',
+  jobs:              '🏗 Projects / Jobs',
+  contractors:       '🔨 Contractors / Vendors',
+  employees:         '👷 Employees',
+  timesheet:         '⏱ Timesheet',
+  payroll_runs:      '💵 Payroll Runs',
+  invoices:          '🧾 Invoices',
+  bank_accounts:     '🏦 Bank Accounts',
+  bank_transactions: '💳 Bank Transactions',
+  certificates:      '📋 COI / Certificates',
+  reminders:         '🔔 Reminders',
+  work_categories:   '⚙ Work Categories',
+  reconciliation:    '🔁 Bank Reconciliation',
+};
+
+async function loadTableStats() {
+  const grid = document.getElementById('data-table-grid');
+  if (!grid) return;
+  grid.innerHTML = '<div style="font-size:12px;color:var(--text-dim)">Loading…</div>';
+  try {
+    const r = await fetch('/api/data/table-stats');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const stats = await r.json();
+    grid.innerHTML = '';
+    for (const [key, label] of Object.entries(DM_TABLES)) {
+      const s = stats[key] || {active:0, deleted:0, total:0};
+      const delBadge = s.deleted > 0
+        ? ` · <span style="color:var(--orange,#f59e0b)">${s.deleted.toLocaleString()} deleted</span>` : '';
+      const restoreBtn = s.deleted > 0
+        ? `<button class="btn btn-xs" style="border:1px solid var(--accent);color:var(--accent)" onclick="dmRestore('${key}','${label}')">↩ Restore</button>` : '';
+      const card = document.createElement('div');
+      card.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:7px';
+      card.innerHTML =
+        `<div style="font-weight:600;font-size:12px">${label}</div>
+         <div style="font-size:11px;color:var(--text-dim)">${s.active.toLocaleString()} active${delBadge}</div>
+         <div style="display:flex;gap:4px;flex-wrap:wrap">
+           <a href="/api/data/table-export?table=${key}" class="btn btn-outline btn-xs" title="Download active rows as CSV">⬇ Export</a>
+           <button class="btn btn-outline btn-xs" onclick="dmImport('${key}','${label}')">⬆ Import</button>
+           <button class="btn btn-outline btn-xs" onclick="dmReplace('${key}','${label}')">↺ Replace</button>
+           <button class="btn btn-danger btn-xs"  onclick="dmClear('${key}','${label}')">🗑 Clear</button>
+           ${restoreBtn}
+         </div>`;
+      grid.appendChild(card);
+    }
+    buildBackupGrid();
+  } catch(e) {
+    grid.innerHTML = `<div style="color:var(--red,#ef4444);font-size:12px">Failed to load stats: ${e.message}</div>`;
+  }
+}
+
+function buildBackupGrid() {
+  const g = document.getElementById('bk-table-grid');
+  if (!g) return;
+  g.innerHTML = '';
+  for (const [key, label] of Object.entries(DM_TABLES)) {
+    const lbl = document.createElement('label');
+    lbl.style.cssText = 'font-size:12px;display:flex;align-items:center;gap:5px;cursor:pointer';
+    lbl.innerHTML = `<input type="checkbox" class="bk-tbl" data-key="${key}" checked style="accent-color:var(--accent)"> ${label}`;
+    g.appendChild(lbl);
+  }
+}
+
+async function runSelectiveBackup() {
+  const tables = Array.from(document.querySelectorAll('.bk-tbl:checked')).map(c => c.dataset.key);
+  const include_db = document.getElementById('bk-db').checked;
+  const include_receipts = document.getElementById('bk-receipts').checked;
+  const include_certs = document.getElementById('bk-certs').checked;
+  const status = document.getElementById('bk-status');
+  if (!tables.length && !include_db) { alert('Select at least one item to include.'); return; }
+  status.style.color = 'var(--accent)';
+  status.textContent = '⏳ Creating backup…';
+  const r = await fetch('/api/backup/selective', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({tables, include_db, include_receipts, include_certs, label:'selective'})
+  });
+  const d = await r.json();
+  if (d.success) {
+    status.textContent = `✓ Saved: ${d.filename} (${d.size_mb} MB, ${d.tables.length} tables)`;
+  } else {
+    status.style.color = 'var(--red,#ef4444)';
+    status.textContent = '✗ Error: ' + (d.error || 'Unknown');
+  }
+}
+
+async function dmClear(key, label) {
+  if (!confirm(`Soft-delete all active rows in ${label}?\n\nRows are hidden but recoverable with ↩ Restore.\nA backup is created automatically first.`)) return;
+  const r = await fetch('/api/data/table-clear', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({table: key})
+  });
+  const d = await r.json();
+  if (d.success) { showToast(`Cleared ${d.cleared} rows from ${label}`, 'success'); loadTableStats(); }
+  else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+}
+
+async function dmRestore(key, label) {
+  if (!confirm(`Restore all soft-deleted rows in ${label}?`)) return;
+  const r = await fetch('/api/data/table-restore', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({table: key})
+  });
+  const d = await r.json();
+  if (d.success) { showToast(`Restored ${d.restored} rows in ${label}`, 'success'); loadTableStats(); }
+  else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+}
+
+function dmImport(key, label) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.csv';
+  inp.onchange = async () => {
+    if (!inp.files[0]) return;
+    if (!confirm(`Append CSV rows to ${label}?\n\nExisting data is not changed. Rows are added.`)) return;
+    const form = new FormData();
+    form.append('file', inp.files[0]);
+    form.append('table', key);
+    form.append('mode', 'append');
+    const r = await fetch('/api/data/table-import', {method:'POST', body:form});
+    const d = await r.json();
+    if (d.success) {
+      showToast(`Imported ${d.inserted} rows into ${label}${d.skipped ? ' (' + d.skipped + ' skipped)' : ''}`, 'success');
+      loadTableStats();
+    } else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+  };
+  inp.click();
+}
+
+function dmReplace(key, label) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.csv';
+  inp.onchange = async () => {
+    if (!inp.files[0]) return;
+    if (!confirm(`REPLACE all data in ${label}?\n\nExisting rows will be soft-deleted, then your CSV imported.\nA backup is created first. This cannot be undone except via backup restore.`)) return;
+    const form = new FormData();
+    form.append('file', inp.files[0]);
+    form.append('table', key);
+    form.append('mode', 'replace');
+    const r = await fetch('/api/data/table-import', {method:'POST', body:form});
+    const d = await r.json();
+    if (d.success) {
+      showToast(`Replaced ${label} — ${d.inserted} rows imported`, 'success');
+      loadTableStats();
+    } else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+  };
+  inp.click();
+}
+
+// Legacy shim for old clearTable calls elsewhere
+function clearTable(tbl, label) {
+  dmClear(tbl === 'clients_soft' ? 'clients' : tbl, label);
+}
+async function importClientsCsv(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  const r = await fetch('/clients/import-csv', {method:'POST', body:form});
+  const d = await r.json().catch(() => ({error:'Server error'}));
+  if (d.success) alert(`Imported ${d.added} clients (${d.skipped} skipped as duplicates).`);
+  else alert('Import failed: ' + (d.error || 'Unknown'));
+}
+</script>
+{% endblock %}

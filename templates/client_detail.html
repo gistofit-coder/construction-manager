@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}{{ client.full_name }} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}{{ client.full_name }}{% endblock %}
+{% block breadcrumb %}
+  <a href="/">Home</a> / <a href="/clients">Clients</a> / {{ client.full_name }}
+{% endblock %}
+
+{% block content %}
+<!-- Client Header -->
+<div class="flex gap-12" style="align-items:flex-start;margin-bottom:16px;flex-wrap:wrap">
+  <div class="card" style="flex:1;min-width:280px">
+    <div class="card-header">
+      <span class="card-title">👤 {{ client.full_name }}</span>
+      <div class="card-actions">
+        <a href="/clients/{{ client.id }}/edit" class="btn btn-outline btn-sm">✏️ Edit</a>
+      </div>
+    </div>
+    <div class="card-body">
+      <table style="width:100%">
+        {% macro row(label, value, href=None) %}
+        <tr>
+          <td class="text-dim" style="padding:4px 0;width:120px;font-size:11px">{{ label }}</td>
+          <td style="padding:4px 0">
+            {% if href and value %}<a href="{{ href }}" style="color:var(--accent)">{{ value }}</a>
+            {% elif value %}{{ value }}
+            {% else %}<span class="text-dim">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endmacro %}
+        {{ row('Client ID', client.customer_id) }}
+        {{ row('Status', '') }}
+        <tr>
+          <td class="text-dim" style="padding:4px 0;font-size:11px">Status</td>
+          <td style="padding:4px 0">
+            <span class="badge badge-{% if client.status=='Active' %}green{% elif client.status=='Prospect' %}blue{% else %}gray{% endif %}">
+              {{ client.status }}
+            </span>
+          </td>
+        </tr>
+        {{ row('Year Acquired', client.year_acquired) }}
+        {{ row('Address', client.address) }}
+        {{ row('City/State/ZIP', client.city_state_zip) }}
+        {{ row('Phone 1', client.phone1, 'tel:' + (client.phone1 or '')) }}
+        {{ row('Phone 2', client.phone2, 'tel:' + (client.phone2 or '')) }}
+        {{ row('Email 1', client.email1, 'mailto:' + (client.email1 or '')) }}
+        {{ row('Email 2', client.email2, 'mailto:' + (client.email2 or '')) }}
+      </table>
+      {% if client.notes %}
+      <hr class="dim">
+      <p class="text-dim" style="font-size:11px">{{ client.notes }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Activity Summary KPIs -->
+  <div style="display:flex;flex-direction:column;gap:10px;min-width:160px">
+    <div class="kpi-tile green">
+      <div class="kpi-label">Total Invoiced</div>
+      <div class="kpi-value" style="font-size:18px">${{ '{:,.2f}'.format(total_invoiced) }}</div>
+    </div>
+    <div class="kpi-tile">
+      <div class="kpi-label">Total Paid</div>
+      <div class="kpi-value" style="font-size:18px;color:var(--accent)">${{ '{:,.2f}'.format(total_paid) }}</div>
+    </div>
+    {% if balance_outstanding > 0 %}
+    <div class="kpi-tile red">
+      <div class="kpi-label">Outstanding</div>
+      <div class="kpi-value" style="font-size:18px">${{ '{:,.2f}'.format(balance_outstanding) }}</div>
+    </div>
+    {% endif %}
+    <div class="kpi-tile">
+      <div class="kpi-label">Active Jobs</div>
+      <div class="kpi-value" style="font-size:18px">{{ jobs | selectattr('status','equalto','Active') | list | length }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Jobs -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">🔨 Jobs</span>
+    <div class="card-actions">
+      <a href="/jobs/new?client_id={{ client.id }}" class="btn btn-outline btn-sm">+ New Job</a>
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    {% if jobs %}
+    <table>
+      <thead>
+        <tr><th>Job Code</th><th>Description</th><th>Status</th><th>Start</th><th>End</th>
+            <th style="text-align:right">Contract</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for j in jobs %}
+        <tr>
+          <td><span class="badge badge-blue">{{ j.job_code }}</span></td>
+          <td class="wrap">{{ j.description or '—' }}</td>
+          <td>
+            <span class="badge badge-{% if j.status=='Active' %}green{% elif j.status=='Archived' %}gray{% else %}blue{% endif %}">
+              {{ j.status }}
+            </span>
+          </td>
+          <td class="mono dim">{{ j.start_date or '—' }}</td>
+          <td class="mono dim">{{ j.end_date or '—' }}</td>
+          <td class="amount">{% if j.contract_amount %}${{ '{:,.2f}'.format(j.contract_amount) }}{% else %}—{% endif %}</td>
+          <td><a href="/jobs/{{ j.id }}/edit" class="btn btn-outline btn-xs">Edit</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><p>No jobs yet. <a href="/jobs/new?client_id={{ client.id }}" class="text-accent">Create one →</a></p></div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Invoices -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">🧾 Invoices</span>
+    <div class="card-actions">
+      <a href="/invoices/new?client_id={{ client.id }}" class="btn btn-outline btn-sm">+ New Invoice</a>
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    {% if invoices %}
+    <table>
+      <thead>
+        <tr><th>#</th><th>Date</th><th>Due</th><th>Job</th>
+            <th style="text-align:right">Amount</th>
+            <th style="text-align:right">Paid</th>
+            <th style="text-align:right">Balance</th>
+            <th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for inv in invoices %}
+        <tr>
+          <td class="mono text-accent">{{ inv.invoice_number }}</td>
+          <td class="mono dim">{{ inv.invoice_date }}</td>
+          <td class="mono dim {% if inv.status=='Overdue' %}text-red{% endif %}">{{ inv.due_date or '—' }}</td>
+          <td>{% if inv.job_code %}<span class="badge badge-blue">{{ inv.job_code }}</span>{% else %}—{% endif %}</td>
+          <td class="amount">${{ '{:,.2f}'.format(inv.amount) }}</td>
+          <td class="amount text-green">${{ '{:,.2f}'.format(inv.amount_paid) }}</td>
+          <td class="amount {% if inv.balance_due > 0 %}text-red{% endif %}">${{ '{:,.2f}'.format(inv.balance_due) }}</td>
+          <td>
+            <span class="badge badge-{% if inv.status=='Paid' %}green{% elif inv.status=='Overdue' %}red{% elif inv.status=='Partial' %}yellow{% else %}gray{% endif %}">
+              {{ inv.status }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><p>No invoices yet.</p></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

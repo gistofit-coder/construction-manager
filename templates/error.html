@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Error {{ error }} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}Error {{ error }}{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-body" style="padding:60px;text-align:center">
+    <div style="font-size:48px;margin-bottom:16px">{% if error == 404 %}🔍{% else %}⚠️{% endif %}</div>
+    <h2 style="color:var(--red);margin-bottom:8px">Error {{ error }}</h2>
+    <p class="text-dim" style="margin-bottom:24px">{{ message }}</p>
+    <a href="/" class="btn btn-primary">← Back to Dashboard</a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Contractors/Suppliers — {{ config.company_name or 'Construction Manager' }}
+<script>
+function editRating(id, current) {
+  const stars = ['None', '⭐', '⭐⭐', '⭐⭐⭐', '⭐⭐⭐⭐', '⭐⭐⭐⭐⭐'];
+  const opts = stars.map((s, i) => `<option value="${i}" ${i==current?'selected':''}>${s}</option>`).join('');
+  const html = `<div id="rating-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border-radius:8px;padding:20px;min-width:220px;box-shadow:0 4px 24px rgba(0,0,0,.3)">
+      <h4 style="margin-bottom:12px">Set Preference Rating</h4>
+      <select id="rating-val" style="width:100%;margin-bottom:12px;padding:6px">${opts}</select>
+      <div class="flex gap-8">
+        <button class="btn btn-outline btn-sm" onclick="document.getElementById('rating-modal').remove()">Cancel</button>
+        <button class="btn btn-primary btn-sm" onclick="saveRating(${id})">Save</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+async function saveRating(id) {
+  const v = document.getElementById('rating-val').value;
+  document.getElementById('rating-modal').remove();
+  const r = await fetch(`/contractors/${id}/patch`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({rank_preference: parseInt(v)})
+  });
+  if (r.ok) location.reload();
+  else alert('Failed to save rating.');
+}
+</script>
+{% endblock %}
+{% block topbar_title %}🔨 Contractors / Suppliers{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Contractors/Suppliers{% endblock %}
+
+{% block content %}
+<div class="section-header">
+  <h2>Contractor & Supplier Database</h2>
+  <div class="actions">
+    <a href="/contractors/new" class="btn btn-primary">+ New</a>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-body" style="padding:12px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="flex:1;min-width:200px;margin:0">
+        <label>Search</label>
+        <input type="search" name="q" value="{{ q }}" placeholder="Company, contact, trade, website…" class="search">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Trade</label>
+        <select name="trade">
+          <option value="">All Trades</option>
+          {% for t in trades %}
+          <option value="{{ t }}" {% if trade_filter==t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Type</label>
+        <select name="ctype">
+          <option value="">All Types</option>
+          <option value="Subcontractor" {% if ctype_filter=='Subcontractor' %}selected{% endif %}>Subcontractors</option>
+          <option value="Supplier" {% if ctype_filter=='Supplier' %}selected{% endif %}>Suppliers</option>
+          <option value="Service Provider" {% if ctype_filter=='Service Provider' %}selected{% endif %}>Service Providers</option>
+          <option value="Government/Tax" {% if ctype_filter=='Government/Tax' %}selected{% endif %}>Government/Tax</option>
+          <option value="Other" {% if ctype_filter=='Other' %}selected{% endif %}>Other</option>
+        </select>
+      </div>
+      <div class="check-group" style="align-self:flex-end;padding-bottom:2px">
+        <input type="checkbox" name="needs_1099" value="1" id="chk-1099" {% if only_1099=='1' %}checked{% endif %}>
+        <label for="chk-1099" style="font-size:11px;color:var(--text-dim)">1099 Only</label>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if q or trade_filter or only_1099 or ctype_filter %}<a href="/contractors" class="btn btn-outline btn-sm">Clear</a>{% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">{{ total }} record{{ 's' if total != 1 }}</span>
+  </div>
+  <div class="card-body no-pad" style="overflow-x:auto">
+    {% if contractors %}
+    <table id="contractors-table" style="min-width:900px">
+      <thead>
+        <tr>
+          <th>⭐</th>
+          <th>Default Category</th>
+          <th>Company</th>
+          <th>Type</th>
+          <th>Trade</th>
+          <th>Contact</th>
+          <th>Phone</th>
+          <th>Website</th>
+          <th>1099</th>
+          <th style="text-align:right">YTD Paid</th>
+          <th>COI Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in contractors %}
+        <tr>
+          <td style="cursor:pointer" onclick="editRating({{ c.id }}, {{ c.rank_preference or 0 }})" title="Click to change rating">{% for i in range(c.rank_preference | int) %}⭐{% endfor %}{% if not c.rank_preference or c.rank_preference == 0 %}<span class="text-dim" style="font-size:10px">Rate</span>{% endif %}</td>
+          <td>
+            {% if c.vendor_category %}
+            <span style="font-size:11px;color:var(--text-dim)">{{ c.vendor_category }}</span>
+            {% endif %}
+          </td>
+          <td>
+            <a href="/contractors/{{ c.id }}" style="color:var(--text-bright);text-decoration:none;font-weight:500">
+              {{ c.company_name }}
+            </a>
+            {% if c.license_number %}
+            <div class="dim" style="font-size:10px">Lic: {{ c.license_number }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.vendor_type == 'Subcontractor' %}
+              <span class="badge badge-blue">Subcontractor</span>
+            {% elif c.vendor_type == 'Supplier' %}
+              <span class="badge badge-gray">Supplier</span>
+            {% elif c.vendor_type == 'Service Provider' %}
+              <span class="badge" style="background:var(--purple,#8b5cf6);color:#fff">Service</span>
+            {% elif c.vendor_type == 'Government/Tax' %}
+              <span class="badge" style="background:var(--orange,#f59e0b);color:#fff">Gov/Tax</span>
+            {% else %}
+              <span class="badge badge-gray">{{ c.vendor_type or 'Other' }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.trade_type %}<span class="badge badge-blue" style="font-size:10px">{{ c.trade_type }}</span>{% else %}<span class="text-dim">—</span>{% endif %}
+          </td>
+          <td class="dim">{{ c.contact_person or '—' }}</td>
+          <td class="dim" style="white-space:nowrap">{{ c.phone or c.cell or '—' }}</td>
+          <td>
+            {% if c.website %}
+              <a href="{{ c.website if c.website.startswith('http') else 'https://' + c.website }}"
+                 target="_blank" style="font-size:11px;color:var(--accent)">
+                {{ c.website | truncate(25, true, '…') }}
+              </a>
+            {% else %}
+              <span class="text-dim">—</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.requires_1099 %}<span class="badge badge-yellow">1099</span>{% else %}<span class="text-dim">—</span>{% endif %}
+          </td>
+          <td class="amount">
+            {% if c.ytd_payments %}<span class="text-accent">${{ '{:,.2f}'.format(c.ytd_payments) }}</span>
+            {% else %}<span class="text-dim">—</span>{% endif %}
+          </td>
+          <td>
+            {% if c.cert_status %}
+              <span class="badge badge-{{ c.cert_status.color }}">{{ c.cert_status.status }}</span>
+            {% elif c.cert_count == 0 %}
+              <span class="text-dim">No COI</span>
+            {% else %}
+              <span class="badge badge-gray">{{ c.cert_count }} cert{{ 's' if c.cert_count != 1 }}</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="flex gap-8">
+              <a href="/contractors/{{ c.id }}" class="btn btn-outline btn-xs">View</a>
+              <a href="/contractors/{{ c.id }}/edit" class="btn btn-outline btn-xs">Edit</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% else %}
+    <div class="empty-state">
+      <div class="icon">🔨</div>
+      {% if q %}<p>No contractors/suppliers matching "{{ q }}"</p>
+      {% else %}<p>No contractors or suppliers yet. <a href="/contractors/new" class="text-accent">Add your first →</a></p>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => initSortableTable('contractors-table'));
+</script>
+{% endblock %}

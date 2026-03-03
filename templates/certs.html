@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+{% block title %}Certs Tracker — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}🛡️ Insurance & Certificates{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Certs Tracker{% endblock %}
+
+{% block content %}
+
+<!-- ── Alert: Upcoming 90-Day Expirations ── -->
+{% if upcoming %}
+<div class="alert alert-warning" style="margin-bottom:14px;flex-direction:column;align-items:flex-start;gap:6px">
+  <strong>⚠️ {{ upcoming|length }} certificate{{ 's' if upcoming|length != 1 }} expiring within 90 days</strong>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">
+    {% for u in upcoming[:8] %}
+    <span class="badge badge-yellow" style="font-size:10px">
+      {{ u.contractor_name or 'Unknown' }} — {{ u.cert_type }}
+      ({{ u.end_date }})
+    </span>
+    {% endfor %}
+    {% if upcoming|length > 8 %}<span class="text-dim" style="font-size:11px">+{{ upcoming|length - 8 }} more</span>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ── KPI Tiles ── -->
+<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+  <a href="?status=Expired" style="text-decoration:none">
+    <div class="kpi-tile red" style="cursor:pointer">
+      <div class="kpi-label">Expired</div>
+      <div class="kpi-value text-red">{{ expired_count }}</div>
+      <div class="kpi-sub">need immediate renewal</div>
+    </div>
+  </a>
+  <a href="?status=Expiring Soon" style="text-decoration:none">
+    <div class="kpi-tile yellow" style="cursor:pointer">
+      <div class="kpi-label">Expiring ≤60 Days</div>
+      <div class="kpi-value text-yellow">{{ expiring_count }}</div>
+      <div class="kpi-sub">renew soon</div>
+    </div>
+  </a>
+  <a href="?status=Active" style="text-decoration:none">
+    <div class="kpi-tile green" style="cursor:pointer">
+      <div class="kpi-label">Active</div>
+      <div class="kpi-value text-green">{{ active_count }}</div>
+      <div class="kpi-sub">valid certs</div>
+    </div>
+  </a>
+  <a href="?status=" style="text-decoration:none">
+    <div class="kpi-tile" style="cursor:pointer">
+      <div class="kpi-label">Total</div>
+      <div class="kpi-value">{{ expired_count + expiring_count + active_count + unknown_count }}</div>
+      <div class="kpi-sub">all certificates</div>
+    </div>
+  </a>
+</div>
+
+<!-- ── Filters + Actions ── -->
+<div class="card" style="margin-bottom:14px">
+  <div class="card-body" style="padding:10px 14px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:center">
+      <select name="status" onchange="this.form.submit()" style="min-width:130px">
+        <option value="">All Status</option>
+        {% for s in ['Expired','Expiring Soon','Active','Archived','Unknown'] %}
+        <option value="{{ s }}" {% if s == status_f %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <select name="cert_type" onchange="this.form.submit()" style="min-width:160px">
+        <option value="">All Types</option>
+        {% for ct in cert_types %}
+        <option value="{{ ct }}" {% if ct == cert_type_f %}selected{% endif %}>{{ ct }}</option>
+        {% endfor %}
+      </select>
+      <input name="contractor" value="{{ contractor_f }}" placeholder="Contractor name…"
+             style="min-width:160px" onchange="this.form.submit()">
+      {% if status_f or cert_type_f or contractor_f %}
+      <a href="/certs" class="btn btn-outline btn-sm">✕ Clear</a>
+      {% endif %}
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="verifyAllCerts(this)">🔍 Verify Files</button>
+        <a href="/certs/export" class="btn btn-outline btn-sm">⬇ CSV</a>
+        <button class="btn btn-outline btn-sm" onclick="scanPdfs()" title="Auto-match PDFs in certs folder to certificate records">🔍 Scan PDFs</button>
+        <a href="/certs/new" class="btn btn-primary btn-sm">+ Add Certificate</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Certificates Table ── -->
+<div class="card">
+  <div class="card-body no-pad">
+    <table id="certsTable">
+      <thead>
+        <tr>
+          <th>Contractor</th>
+          <th>Trade</th>
+          <th>Certificate Type</th>
+          <th style="text-align:center;width:110px">Start</th>
+          <th style="text-align:center;width:110px">Expiration</th>
+          <th style="text-align:center;width:110px">Status</th>
+          <th style="text-align:center;width:80px">Days Left</th>
+          <th>PDF / Notes</th>
+          <th style="width:140px" data-nosort="true">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in certs %}
+        <tr id="cert-row-{{ c.id }}"
+            class="{% if c.status == 'Expired' %}row-overdue{% elif c.status == 'Expiring Soon' %}row-warning{% elif c.status == 'Archived' %}row-archived{% endif %}">
+          <td style="font-weight:500">
+            <a href="/certs/contractor/{{ c.contractor_id }}" style="color:inherit;text-decoration:none">
+              {{ c.contractor_name or c.company_name or '—' }}
+            </a>
+          </td>
+          <td class="text-dim" style="font-size:11px">{{ c.trade_type or '—' }}</td>
+          <td style="font-size:12px">{{ c.cert_type }}</td>
+          <td style="text-align:center" class="mono text-dim">{{ c.start_date or '—' }}</td>
+          <td style="text-align:center" class="mono
+               {% if c.status == 'Expired' %}text-red{% elif c.status == 'Expiring Soon' %}text-yellow{% else %}text-dim{% endif %}">
+            {{ c.end_date or '—' }}
+          </td>
+          <td style="text-align:center">
+            {% if c.status == 'Archived' %}
+              <span class="badge badge-gray" title="Expired more than 1 year ago — kept for audit">Archived</span>
+            {% elif c.status == 'Expired' %}
+              <span class="badge badge-red">Expired</span>
+            {% elif c.status == 'Expiring Soon' %}
+              <span class="badge badge-yellow">Expiring Soon</span>
+            {% elif c.status == 'Active' %}
+              <span class="badge badge-green">Active</span>
+            {% else %}
+              <span class="badge badge-gray">Unknown</span>
+            {% endif %}
+          </td>
+          <td style="text-align:center;font-weight:600"
+              class="{% if c.days_left is not none and c.days_left < 0 %}text-red{% elif c.days_left is not none and c.days_left <= 60 %}text-yellow{% else %}text-dim{% endif %}">
+            {% if c.days_left is not none %}
+              {% if c.days_left < 0 %}{{ c.days_left|abs }}d ago{% else %}{{ c.days_left }}d{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td style="font-size:11px;max-width:220px">
+            {# cert_pdf_filename (auto-matched) takes priority over cert_filename (manual) #}
+            {% set pdf_file = c.cert_pdf_filename or c.cert_filename %}
+            {% if pdf_file %}
+              {% if c.cert_verified %}
+                <a href="/files/certs/{{ pdf_file }}" target="_blank"
+                   title="Open PDF: {{ pdf_file }}" style="color:var(--green);text-decoration:none">
+                  ✅ {{ pdf_file[:26] }}{% if pdf_file|length > 26 %}…{% endif %}
+                </a>
+              {% else %}
+                <a href="/files/certs/{{ pdf_file }}" target="_blank"
+                   title="File may not exist: {{ pdf_file }}" style="color:var(--yellow);text-decoration:none">
+                  ⚠️ {{ pdf_file[:26] }}{% if pdf_file|length > 26 %}…{% endif %}
+                </a>
+              {% endif %}
+            {% else %}
+              <button class="btn btn-outline btn-xs" style="font-size:10px"
+                      onclick="pickPdf({{ c.id }}, '{{ c.cert_type|replace("'","") }}')">📎 Link PDF</button>
+            {% endif %}
+            {% if c.notes %}<div class="text-dim" style="margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">{{ c.notes[:40] }}{% if c.notes|length > 40 %}…{% endif %}</div>{% endif %}
+          </td>
+          <td>
+            <div class="flex gap-8">
+              <button class="btn btn-outline btn-xs" onclick="openRenewModal({{ c.id }}, '{{ c.end_date or '' }}', '{{ c.cert_type }}')" title="Renew / update expiration">♻️ Renew</button>
+              <a href="/certs/{{ c.id }}/edit" class="btn btn-outline btn-xs">✏️</a>
+              <button class="btn btn-danger btn-xs" onclick="deleteCert({{ c.id }})">🗑</button>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" style="text-align:center;padding:40px" class="text-dim">
+            {% if status_f or cert_type_f or contractor_f %}
+              No certificates match your filters. <a href="/certs">Clear filters</a>
+            {% else %}
+              No certificates yet. <a href="/certs/new">Add the first one →</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Renew Modal ── -->
+<div class="modal-overlay" id="renewModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>♻️ Renew Certificate</h3>
+      <button class="modal-close" onclick="closeModal('renewModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-dim" style="font-size:12px;margin-bottom:14px">
+        Update the expiration date for: <strong id="renewCertType"></strong>
+      </p>
+      <input type="hidden" id="renewCertId">
+      <div class="form-group" style="margin-bottom:12px">
+        <label>New Start Date <span class="tip">(optional)</span></label>
+        <input type="date" id="renewStartDate">
+      </div>
+      <div class="form-group">
+        <label>New Expiration Date <span class="req">*</span></label>
+        <input type="date" id="renewEndDate" required>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('renewModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitRenew()">Save Renewal</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pick PDF Modal -->
+<div class="modal-overlay" id="pickPdfModal">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <h3>📎 Link PDF to Certificate</h3>
+      <button class="modal-close" onclick="closeModal('pickPdfModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-dim" style="font-size:12px;margin-bottom:12px">
+        Cert: <strong id="pickPdfCertLabel"></strong>
+      </p>
+      <input type="hidden" id="pickPdfCertId">
+      <div class="form-group" style="margin-bottom:12px">
+        <label>Select PDF from certs folder</label>
+        <select id="pickPdfSelect" style="width:100%">
+          <option value="">Loading…</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Or type filename manually</label>
+        <input type="text" id="pickPdfManual" placeholder="e.g. AcmePlumbing_COI_2025.pdf">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('pickPdfModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="savePdfLink()">💾 Save Link</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function verifyAllCerts(btn) {
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  const r = await fetch('/api/certs/verify-all', {method:'POST'});
+  const d = await r.json();
+  btn.disabled = false; btn.textContent = '🔍 Verify Files';
+  if (d.success) {
+    showToast(`Verified ${d.checked} cert records`, 'success');
+    setTimeout(() => location.reload(), 800);
+  } else {
+    showToast(d.error || 'Verification failed', 'error');
+  }
+}
+
+function openRenewModal(id, currentEnd, certType) {
+  document.getElementById('renewCertId').value = id;
+  document.getElementById('renewCertType').textContent = certType;
+  document.getElementById('renewEndDate').value = '';
+  document.getElementById('renewStartDate').value = '';
+  openModal('renewModal');
+}
+
+async function submitRenew() {
+  const id       = document.getElementById('renewCertId').value;
+  const end_date = document.getElementById('renewEndDate').value;
+  const start_date = document.getElementById('renewStartDate').value;
+  if (!end_date) { alert('Please enter a new expiration date.'); return; }
+
+  const r = await fetch(`/api/certs/${id}/renew`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ end_date, start_date })
+  });
+  const d = await r.json();
+  if (d.success) {
+    closeModal('renewModal');
+    showToast('Certificate renewed!', 'success');
+    setTimeout(() => location.reload(), 800);
+  } else {
+    showToast(d.error || 'Renewal failed', 'error');
+  }
+}
+
+async function deleteCert(id) {
+  if (!confirm('Delete this certificate? This cannot be undone easily.')) return;
+  const r = await fetch(`/api/certs/${id}/delete`, {method: 'POST'});
+  const d = await r.json();
+  if (d.success) {
+    document.getElementById(`cert-row-${id}`)?.remove();
+    showToast('Certificate deleted.', 'success');
+  } else {
+    showToast(d.error || 'Delete failed', 'error');
+  }
+}
+
+async function scanPdfs() {
+  showToast('Scanning certs folder for PDFs…', 'info');
+  const r = await fetch('/api/certs/scan-pdfs', {method:'POST'});
+  const d = await r.json();
+  if (d.success) {
+    let msg = `PDF scan complete: ${d.matched} linked, ${d.created || 0} new certs created`;
+    if (d.unmatched && d.unmatched.length > 0) {
+      const names = [...new Set(d.unmatched)].slice(0, 10).join(', ');
+      msg += `
+
+No contractor match for: ${names}`;
+      if (d.unmatched.length > 10) msg += ` … and ${d.unmatched.length - 10} more`;
+      msg += '
+
+Make sure these contractors are added to your Contractors list first.';
+      alert(msg);
+    } else {
+      showToast(msg, 'success');
+    }
+    setTimeout(() => location.reload(), 900);
+  } else {
+    showToast(d.error || 'Scan failed', 'error');
+  }
+}
+
+let pickPdfAvailable = [];
+
+async function pickPdf(certId, certLabel) {
+  document.getElementById('pickPdfCertId').value = certId;
+  document.getElementById('pickPdfCertLabel').textContent = certLabel;
+  document.getElementById('pickPdfManual').value = '';
+  document.getElementById('pickPdfSelect').innerHTML = '<option value="">Loading…</option>';
+  openModal('pickPdfModal');
+  const r = await fetch('/api/certs/available-pdfs');
+  const d = await r.json();
+  pickPdfAvailable = d.pdfs || [];
+  const sel = document.getElementById('pickPdfSelect');
+  sel.innerHTML = '<option value="">— Choose a file —</option>';
+  for (const f of d.pdfs) {
+    sel.innerHTML += `<option value="${f}">${f}</option>`;
+  }
+  if (!d.pdfs.length) sel.innerHTML = '<option value="">No PDFs found in certs folder</option>';
+}
+
+async function savePdfLink() {
+  const certId   = document.getElementById('pickPdfCertId').value;
+  const manual   = document.getElementById('pickPdfManual').value.trim();
+  const selected = document.getElementById('pickPdfSelect').value;
+  const filename = manual || selected;
+  if (!filename) { showToast('Please select or enter a filename', 'error'); return; }
+  const r = await fetch(`/api/certs/${certId}/set-pdf`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ filename })
+  });
+  const d = await r.json();
+  closeModal('pickPdfModal');
+  if (d.success) {
+    showToast(`PDF linked${d.verified ? ' and verified ✅' : ' (file not found in folder)'}`, d.verified ? 'success' : 'warning');
+    setTimeout(() => location.reload(), 700);
+  } else {
+    showToast(d.error || 'Failed', 'error');
+  }
+}
+
+// Column sort
+document.addEventListener('DOMContentLoaded', () => initSortableTable('certsTable'));
+</script>
+{% endblock %}

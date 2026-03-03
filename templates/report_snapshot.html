@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}{{ month_label }} Snapshot — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📅 Monthly Snapshot{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reports">Reports</a> / Monthly Snapshot{% endblock %}
+
+{% block content %}
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center;flex-wrap:wrap">
+  <div>
+    <h2 style="font-size:18px;font-weight:700">Monthly Snapshot — {{ month_label }}</h2>
+    <div class="text-dim" style="font-size:12px">Executive summary for the month</div>
+  </div>
+  <form method="GET" class="flex gap-8" style="margin-left:auto;align-items:center">
+    <select name="year" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    <select name="month" onchange="this.form.submit()">
+      {% for m in months %}<option value="{{ loop.index }}" {% if loop.index==month %}selected{% endif %}>{{ m }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print</button>
+  </form>
+</div>
+
+<!-- KPI Tiles -->
+<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:16px">
+  <div class="kpi-tile green">
+    <div class="kpi-label">Revenue Collected</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(revenue) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Invoiced (Billed)</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(invoiced) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Expenses</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(expenses) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Payroll</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(payroll) }}</div>
+  </div>
+  <div class="kpi-tile {% if net_profit >= 0 %}green{% else %}red{% endif %}">
+    <div class="kpi-label">Net Profit</div>
+    <div class="kpi-value {% if net_profit >= 0 %}text-green{% else %}text-red{% endif %}">${{ '{:,.0f}'.format(net_profit) }}</div>
+  </div>
+  <div class="kpi-tile blue">
+    <div class="kpi-label">Labor Hours</div>
+    <div class="kpi-value">{{ '%.1f'|format(labor_hrs) }}h</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+  <!-- Left column -->
+  <div>
+    <!-- Top Expenses -->
+    {% if top_exp %}
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">Top Expenses</span></div>
+      <div class="card-body no-pad">
+        <table>
+          <thead><tr><th>Category</th><th>Vendor</th><th style="text-align:right">Total</th><th style="text-align:right">Txns</th></tr></thead>
+          <tbody>
+            {% for e in top_exp %}
+            <tr>
+              <td style="font-size:12px;font-weight:500">{{ e.category or '—' }}</td>
+              <td class="text-dim" style="font-size:11px">{{ (e.vendor or '')[:20] }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(e.total|float) }}</td>
+              <td style="text-align:right" class="text-dim">{{ e.cnt }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Invoices this month -->
+    {% if invoices_mo %}
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">Invoices Issued</span></div>
+      <div class="card-body no-pad">
+        <table>
+          <thead><tr><th>Invoice #</th><th>Client</th><th style="text-align:right">Amount</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for inv in invoices_mo %}
+            <tr>
+              <td class="mono" style="font-size:11px">#{{ inv.invoice_number }}</td>
+              <td style="font-size:12px">{{ inv.client or '—' }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(inv.amount|float) }}</td>
+              <td>
+                {% set sc = {'Paid':'green','Partial':'blue','Pending':'gray','Overdue':'red'} %}
+                <span class="badge badge-{{ sc.get(inv.status,'gray') }}" style="font-size:9px">{{ inv.status }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Right column -->
+  <div>
+    <!-- Active Jobs this month -->
+    {% if active_jobs %}
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">Jobs with Activity</span></div>
+      <div class="card-body" style="display:flex;flex-wrap:wrap;gap:6px">
+        {% for j in active_jobs %}
+        <span class="badge badge-blue" style="font-size:11px">{{ j.job_code }}{% if j.description %} — {{ (j.description or '')[:25] }}{% endif %}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Tax Deadlines -->
+    {% if tax_due %}
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">📅 Tax Deadlines This Month</span></div>
+      <div class="card-body no-pad">
+        <table>
+          <thead><tr><th>Due Date</th><th>Description</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for t in tax_due %}
+            <tr>
+              <td class="mono text-dim" style="font-size:11px">{{ t.due_date }}</td>
+              <td style="font-size:11px">{{ t.task_description }}</td>
+              <td>
+                {% set sc = {'Done':'green','Pending':'yellow','RemindLater':'gray'} %}
+                <span class="badge badge-{{ sc.get(t.status,'gray') }}" style="font-size:9px">{{ t.status }}</span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- P&L Mini Summary -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">P&L Summary</span></div>
+      <div class="card-body" style="font-size:12px">
+        {% for label, val, color in [
+          ('Revenue Collected', revenue, 'var(--green)'),
+          ('Expenses',          expenses, ''),
+          ('Payroll',           payroll, ''),
+        ] %}
+        <div class="flex" style="justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
+          <span {% if not color %}class="text-dim"{% else %}style="color:{{ color }}"{% endif %}>{{ label }}</span>
+          <span class="mono" style="{% if color %}color:{{ color }};{% endif %}">${{ '{:,.2f}'.format(val) }}</span>
+        </div>
+        {% endfor %}
+        <div class="flex" style="justify-content:space-between;padding:8px 0 4px;font-weight:800;font-size:14px">
+          <span>Net Profit</span>
+          <span class="mono {% if net_profit >= 0 %}text-green{% else %}text-red{% endif %}">${{ '{:,.2f}'.format(net_profit) }}</span>
+        </div>
+        {% if revenue %}
+        <div class="text-dim" style="font-size:10px">
+          Margin: {{ '%.1f'|format(net_profit/revenue*100) }}%
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

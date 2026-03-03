@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Import Bank Statement — {{ acct.account_name }}{% endblock %}
+{% block topbar_title %}⬆ Import Bank Statement{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reconciliation">Bank Reconciliation</a> / <a href="/reconciliation/{{ acct.id }}">{{ acct.account_name }}</a> / Import{% endblock %}
+
+{% block content %}
+<div style="max-width:640px">
+  <div class="card">
+    <div class="card-header"><span class="card-title">Import CSV Bank Statement</span></div>
+    <div class="card-body">
+      <form method="POST" enctype="multipart/form-data" id="import-form"
+            action="/reconciliation/{{ acct.id }}/import">
+        <div class="form-group">
+          <label>Bank Statement CSV <span class="req">*</span></label>
+          <input type="file" name="csv_file" accept=".csv,.txt" required id="csv-input"
+                 onchange="previewFile(event)">
+          <div class="field-hint">
+            Most bank CSV exports work automatically. Columns auto-detected: Date, Description, Amount, Debit/Credit, Reference.
+          </div>
+        </div>
+
+        <div id="preview-area" style="display:none;margin-bottom:16px">
+          <div class="card" style="background:var(--bg)">
+            <div class="card-header"><span class="card-title" style="font-size:12px">Preview (first 5 rows)</span></div>
+            <div class="card-body no-pad">
+              <div id="preview-table" style="overflow-x:auto;font-size:11px"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex gap-8">
+          <button type="submit" class="btn btn-primary">⬆ Import Transactions</button>
+          <a href="/reconciliation/{{ acct.id }}" class="btn btn-outline">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="card-header"><span class="card-title">Supported CSV Formats</span></div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+        The importer auto-detects column names. Common formats supported:
+      </p>
+      <div style="font-size:11px;display:grid;gap:6px">
+        {% for bank, cols in [
+          ('Chase / Bank of America', 'Date, Description, Amount'),
+          ('Wells Fargo', 'Date, Description, Deposits, Withdrawals, Balance'),
+          ('QuickBooks export', 'Date, Num, Description, Memo, Amount'),
+          ('Generic', 'Transaction Date, Description, Debit Amount, Credit Amount'),
+        ] %}
+        <div class="flex gap-8">
+          <span style="font-weight:500;min-width:160px">{{ bank }}</span>
+          <span class="text-dim mono">{{ cols }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      <p style="font-size:11px;color:var(--text-dim);margin-top:10px">
+        Duplicate transactions (same date + amount + type + reference) are automatically skipped.
+        Auto-matching runs after import.
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function previewFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const lines = e.target.result.split('\n').slice(0, 6);
+    if (!lines.length) return;
+    const headers = lines[0].split(',');
+    let html = '<table style="width:100%;border-collapse:collapse">';
+    html += '<thead><tr>' + headers.map(h =>
+      `<th style="padding:4px 8px;text-align:left;border-bottom:1px solid var(--border)">${h.replace(/"/g,'')}</th>`
+    ).join('') + '</tr></thead><tbody>';
+    for (let i = 1; i < Math.min(lines.length, 6); i++) {
+      if (!lines[i].trim()) continue;
+      const cells = lines[i].split(',');
+      html += '<tr>' + cells.map(c =>
+        `<td style="padding:3px 8px;border-bottom:1px solid var(--border)">${c.replace(/"/g,'').substring(0,30)}</td>`
+      ).join('') + '</tr>';
+    }
+    html += '</tbody></table>';
+    document.getElementById('preview-table').innerHTML = html;
+    document.getElementById('preview-area').style.display = '';
+  };
+  reader.readAsText(file);
+}
+</script>
+{% endblock %}

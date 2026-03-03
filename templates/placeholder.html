@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ page }} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}{{ icon }} {{ page }}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / {{ page }}{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body" style="padding:60px;text-align:center">
+    <div style="font-size:48px;margin-bottom:16px">{{ icon }}</div>
+    <h2 style="color:var(--text-bright);font-size:20px;margin-bottom:8px">{{ page }}</h2>
+    <p class="text-dim" style="margin-bottom:24px;font-size:13px">
+      This module is coming in <strong class="text-accent">Phase {{ phase }}</strong>.
+    </p>
+    <div style="display:flex;gap:8px;justify-content:center">
+      <a href="/" class="btn btn-outline">← Back to Dashboard</a>
+      <a href="/settings" class="btn btn-primary">⚙️ Settings</a>
+    </div>
+
+    <!-- Build progress -->
+    <div style="max-width:400px;margin:32px auto 0">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-dim);margin-bottom:6px">
+        <span>Build Progress</span>
+        <span>Phase 1 / 10</span>
+      </div>
+      <div class="progress-bar" style="height:10px">
+        <div class="progress-fill green" style="width:10%"></div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;justify-content:center;font-size:10px">
+        <span class="badge badge-green">✓ P1 Foundation</span>
+        <span class="badge badge-gray">P2 Core Data</span>
+        <span class="badge badge-gray">P3 Ledger</span>
+        <span class="badge badge-gray">P4 Timesheet</span>
+        <span class="badge badge-gray">P5 Invoices</span>
+        <span class="badge badge-gray">P6 Payroll</span>
+        <span class="badge badge-gray">P7 Bank Rec</span>
+        <span class="badge badge-gray">P8 Reports</span>
+        <span class="badge badge-gray">P9 Bidding</span>
+        <span class="badge badge-gray">P10 Polish</span>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

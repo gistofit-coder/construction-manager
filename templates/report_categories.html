@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Category Breakdown {{ year }} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}🏷️ Category Breakdown{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reports">Reports</a> / Category Breakdown{% endblock %}
+{% block content %}
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center;flex-wrap:wrap">
+  <h2 style="font-size:18px;font-weight:700">Spending by Category — {{ year }}</h2>
+  <form method="GET" class="flex gap-8" style="margin-left:auto;flex-wrap:wrap;align-items:center">
+    <select name="year" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    <select name="job" onchange="this.form.submit()" style="min-width:130px">
+      <option value="">All Jobs</option>
+      {% for j in job_list %}<option value="{{ j }}" {% if job_filter==j %}selected{% endif %}>{{ j }}</option>{% endfor %}
+    </select>
+    <select name="month" onchange="this.form.submit()">
+      <option value="">All Months</option>
+      {% for m in range(1,13) %}<option value="{{ m }}" {% if month_filter==m|string %}selected{% endif %}>{{ ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][m-1] }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print</button>
+  </form>
+</div>
+<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+  <div class="kpi-tile"><div class="kpi-label">Total Spend</div><div class="kpi-value">${{ '{:,.0f}'.format(total_spend) }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">Categories</div><div class="kpi-value">{{ categories|length }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">Top Category</div>
+    <div class="kpi-value" style="font-size:14px">{{ categories[0].category if categories else '—' }}</div>
+    <div class="kpi-sub">{{ '$'+'{:,.0f}'.format(categories[0].total) if categories else '' }}</div>
+  </div>
+</div>
+<div class="card">
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th style="text-align:right;width:60px">Txns</th>
+          <th style="text-align:right;width:110px">Total</th>
+          <th style="text-align:right;width:90px">Avg / Txn</th>
+          <th style="text-align:right;width:55px">Share</th>
+          <th style="width:160px">Bar</th>
+          <th style="width:70px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in categories %}
+        <tr class="category-row" id="cat-row-{{ loop.index }}">
+          <td style="font-weight:500;font-size:12px">{{ c.category or '(uncategorized)' }}</td>
+          <td style="text-align:right" class="text-dim">{{ c.txn_count }}</td>
+          <td style="text-align:right;font-weight:600" class="mono">${{ '{:,.2f}'.format(c.total) }}</td>
+          <td style="text-align:right" class="mono text-dim">${{ '{:,.2f}'.format(c.avg_amount) }}</td>
+          <td style="text-align:right">{{ c.pct }}%</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div style="flex:1;background:var(--border);border-radius:2px;height:8px;overflow:hidden">
+                <div style="width:{{ c.pct }}%;height:100%;background:var(--blue);border-radius:2px"></div>
+              </div>
+            </div>
+          </td>
+          <td>
+            <button class="btn btn-xs btn-outline" onclick="toggleDetail({{ loop.index }}, '{{ c.category|e }}')">
+              ▶ Detail
+            </button>
+          </td>
+        </tr>
+        <!-- Expandable detail row -->
+        <tr id="detail-row-{{ loop.index }}" style="display:none;background:var(--bg)">
+          <td colspan="7" style="padding:0">
+            <div id="detail-content-{{ loop.index }}" style="padding:10px 20px;font-size:12px">
+              <div class="text-dim">Loading…</div>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-dim" style="text-align:center;padding:30px">No ledger entries for {{ year }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const YEAR = {{ year }};
+const JOB  = '{{ job_filter }}';
+const MONTH = '{{ month_filter }}';
+
+function toggleDetail(idx, category) {
+  const detailRow = document.getElementById('detail-row-' + idx);
+  const btn = document.querySelector('#cat-row-' + idx + ' button');
+  if (detailRow.style.display !== 'none') {
+    detailRow.style.display = 'none';
+    btn.textContent = '▶ Detail';
+    return;
+  }
+  detailRow.style.display = '';
+  btn.textContent = '▼ Hide';
+  const container = document.getElementById('detail-content-' + idx);
+  container.innerHTML = '<div class="text-dim">Loading…</div>';
+
+  const params = new URLSearchParams({category, year: YEAR});
+  if (JOB)   params.append('job', JOB);
+  if (MONTH) params.append('month', MONTH);
+
+  fetch('/api/reports/category-detail?' + params.toString())
+    .then(r => r.json())
+    .then(data => {
+      if (!data.rows || !data.rows.length) {
+        container.innerHTML = '<div class="text-dim">No entries found.</div>';
+        return;
+      }
+      let html = '<table style="width:100%;font-size:11px;border-collapse:collapse">';
+      html += '<thead><tr style="border-bottom:1px solid var(--border)">'
+        + '<th style="text-align:left;padding:3px 8px">Date</th>'
+        + '<th style="text-align:left;padding:3px 8px">Vendor</th>'
+        + '<th style="text-align:left;padding:3px 8px">Job</th>'
+        + '<th style="text-align:left;padding:3px 8px">Description</th>'
+        + '<th style="text-align:right;padding:3px 8px">Amount</th>'
+        + '<th style="padding:3px 8px">Receipt</th>'
+        + '</tr></thead><tbody>';
+      data.rows.forEach(r => {
+        const amt = parseFloat(r.amount || 0);
+        const amtColor = amt > 0 ? 'color:var(--green)' : amt < 0 ? 'color:var(--red)' : '';
+        const amtFmt = (amt > 0 ? '+' : '') + '$' + Math.abs(amt).toLocaleString('en-US',{minimumFractionDigits:2});
+        const receiptIcon = r.receipt_verified ? '✅' : r.receipt_filename ? '⚠️' : '—';
+        html += `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:3px 8px;font-family:monospace">${r.entry_date || ''}</td>
+          <td style="padding:3px 8px">${r.vendor || ''}</td>
+          <td style="padding:3px 8px"><span class="badge badge-blue" style="font-size:9px">${r.job_code || ''}</span></td>
+          <td style="padding:3px 8px;max-width:220px;overflow:hidden;text-overflow:ellipsis">${r.description || ''}</td>
+          <td style="padding:3px 8px;text-align:right;font-family:monospace;${amtColor}">${amtFmt}</td>
+          <td style="padding:3px 8px;text-align:center">${receiptIcon}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      html += `<div class="text-dim" style="font-size:10px;margin-top:6px">${data.rows.length} transactions · 
+        <a href="/ledger?cat=${encodeURIComponent(category)}&year=${YEAR}${JOB?'&job='+JOB:''}${MONTH?'&month='+YEAR+'-'+(MONTH.toString().padStart(2,'0')):''}">
+        View in Ledger →</a></div>`;
+      container.innerHTML = html;
+    })
+    .catch(() => { container.innerHTML = '<div class="text-dim">Error loading detail.</div>'; });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}{% if run %}Edit Payroll Run{% else %}New Payroll Run{% endif %} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}💼 {% if run %}Edit Payroll Run{% else %}New Payroll Run{% endif %}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/payroll">Payroll</a> / {% if run %}Edit{% else %}New Run{% endif %}{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start">
+
+  <!-- ── Left: Form ── -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">{% if run %}Edit Payroll Run{% else %}New Payroll Run{% endif %}</span></div>
+    <div class="card-body">
+      <form method="POST" id="payroll-form"
+            action="{% if run %}/payroll/{{ run.id }}/edit{% else %}/payroll/new{% endif %}">
+        <div class="form-grid">
+
+          <div class="form-group">
+            <label>Employee <span class="req">*</span></label>
+            <select name="emp_id" id="emp-select" required onchange="onEmpChange()">
+              <option value="">— select employee —</option>
+              {% for e in employees %}
+              <option value="{{ e.emp_id }}"
+                      {% if (run and run.emp_id==e.emp_id) or prefill_emp==e.emp_id|string %}selected{% endif %}>
+                {{ e.name }}{% if e.occupation %} — {{ e.occupation }}{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Pay Period Start <span class="req">*</span></label>
+            <input type="date" name="pay_period_start" id="period-start"
+                   value="{{ run.pay_period_start if run else default_start }}"
+                   required onchange="onPeriodChange()">
+          </div>
+
+          <div class="form-group">
+            <label>Pay Period End <span class="req">*</span></label>
+            <input type="date" name="pay_period_end" id="period-end"
+                   value="{{ run.pay_period_end if run else default_end }}"
+                   required onchange="onPeriodChange()">
+          </div>
+
+          <!-- Total hours — with pull-from-timesheet button -->
+          <div class="form-group">
+            <label>Total Hours <span class="req">*</span></label>
+            <div class="flex gap-6">
+              <input type="number" name="total_hours" id="total-hours" step="0.25" min="0"
+                     value="{{ '{:.2f}'.format((run.standard_hours or 0) + (run.overtime_hours or 0)) if run else '' }}"
+                     placeholder="e.g. 44.0" style="flex:1" oninput="refreshPreview()" required>
+              <button type="button" class="btn btn-outline btn-sm" onclick="pullHours()" title="Pull from timesheet">
+                ⏱ Pull
+              </button>
+            </div>
+            <div id="ts-hint" class="field-hint"></div>
+            <!-- OT indicator -->
+            <div id="ot-indicator" style="font-size:11px;margin-top:4px;display:none">
+              <span class="text-yellow">⚠ Overtime: <span id="ot-hours-hint">0</span>h @ 1.5×</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Holiday Hours</label>
+            <input type="number" name="holiday_hours" id="holiday-hours" step="0.25" min="0"
+                   value="{{ '{:.2f}'.format(run.holiday_hours) if run else '0' }}"
+                   placeholder="0.00" oninput="refreshPreview()">
+          </div>
+
+          <div class="form-group">
+            <label>Standard Pay Rate ($/hr)</label>
+            <input type="number" name="standard_pay_rate" id="std-rate" step="0.01" min="0"
+                   value="{{ '{:.2f}'.format(run.standard_pay_rate) if run else '' }}"
+                   placeholder="Auto from employee rates" oninput="refreshPreview()">
+            <div class="field-hint" id="rate-hint">Auto-fetched when employee + date selected.</div>
+          </div>
+
+          <div class="form-group">
+            <label>OT Rate ($/hr) <span class="text-dim" style="font-size:10px">default 1.5×</span></label>
+            <input type="number" name="overtime_pay_rate" id="ot-rate" step="0.01" min="0"
+                   value="{{ '{:.2f}'.format(run.overtime_pay if run else 0) if run else '' }}"
+                   placeholder="Auto: std × 1.5" oninput="refreshPreview()">
+          </div>
+
+          <div class="form-group">
+            <label>Federal W/H</label>
+            <input type="number" name="fed_withholding" id="fed-wh" step="0.01" min="0"
+                   value="{{ '{:.2f}'.format(run.fed_withholding) if run else '0' }}"
+                   placeholder="0.00" oninput="refreshPreview()">
+            <div class="field-hint">From employee W-4 / per period</div>
+          </div>
+
+          <div class="form-group">
+            <label>State W/H (IL)</label>
+            <input type="number" name="state_withholding" id="state-wh" step="0.01" min="0"
+                   value="{{ '{:.2f}'.format(run.state_withholding) if run else '0' }}"
+                   placeholder="0.00" oninput="refreshPreview()">
+          </div>
+
+          <div class="form-group">
+            <label>Check Number</label>
+            <input type="text" name="check_number"
+                   value="{{ run.check_number if run else '' }}"
+                   placeholder="e.g. 1042">
+          </div>
+
+          <div class="form-group full">
+            <label>Notes</label>
+            <textarea name="notes" rows="2" placeholder="Optional">{{ run.notes if run else '' }}</textarea>
+          </div>
+
+          <div class="form-group full flex gap-8" style="margin-top:4px">
+            <button type="submit" class="btn btn-primary">
+              {% if run %}💾 Save Changes{% else %}✅ Create Payroll Run{% endif %}
+            </button>
+            <a href="{% if run %}/payroll/{{ run.id }}{% else %}/payroll{% endif %}" class="btn btn-outline">Cancel</a>
+            {% if run %}
+              <button type="button" class="btn btn-danger" style="margin-left:auto"
+                      onclick="if(confirm('Delete this run? You can undo.')) { fetch('/payroll/{{ run.id }}/delete',{method:'POST'}).then(()=>window.location='/payroll'); }">
+                🗑 Delete
+              </button>
+            {% endif %}
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── Right: Live Preview ── -->
+  <div>
+    <div class="card" style="position:sticky;top:16px">
+      <div class="card-header"><span class="card-title">Live Preview</span></div>
+      <div class="card-body" id="preview-panel">
+        <p class="text-dim" style="font-size:12px">Select employee and enter hours to preview.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const OT_THRESHOLD = 40.0;
+let _debounce = null;
+
+async function onEmpChange() {
+  const empId = document.getElementById('emp-select').value;
+  const start = document.getElementById('period-start').value;
+  if (!empId) return;
+  const res  = await fetch(`/api/payroll/rates?emp_id=${empId}&start=${start}`);
+  const data = await res.json();
+  const stdEl = document.getElementById('std-rate');
+  if (stdEl && !stdEl.value) {
+    stdEl.value = data.std_rate ? data.std_rate.toFixed(2) : '';
+  }
+  const otEl = document.getElementById('ot-rate');
+  if (otEl && !otEl.value) {
+    otEl.value = data.ot_rate ? data.ot_rate.toFixed(2) : '';
+  }
+  document.getElementById('rate-hint').textContent =
+    data.std_rate ? `Rate as of ${start}: $${data.std_rate}/hr (cost rate)` : 'No rate found for this date.';
+  refreshPreview();
+}
+
+async function onPeriodChange() {
+  const start = document.getElementById('period-start').value;
+  const end   = document.getElementById('period-end').value;
+  // Auto-set end to start+6 if only start entered
+  if (start && !end) {
+    const d = new Date(start + 'T00:00:00');
+    d.setDate(d.getDate() + 6);
+    document.getElementById('period-end').value = d.toISOString().split('T')[0];
+  }
+  onEmpChange();
+}
+
+async function pullHours() {
+  const empId = document.getElementById('emp-select').value;
+  const start = document.getElementById('period-start').value;
+  const end   = document.getElementById('period-end').value;
+  if (!empId || !start || !end) {
+    showToast('Select employee and pay period first.', 'error'); return;
+  }
+  const res  = await fetch(`/api/payroll/timesheet-hours?emp_id=${empId}&start=${start}&end=${end}`);
+  const data = await res.json();
+  const hrs  = parseFloat(data.hours) || 0;
+  document.getElementById('total-hours').value = hrs.toFixed(2);
+  document.getElementById('ts-hint').textContent =
+    `${hrs.toFixed(2)} hrs pulled from timesheet (${start} → ${end})`;
+  refreshPreview();
+}
+
+function refreshPreview() {
+  clearTimeout(_debounce);
+  _debounce = setTimeout(_doPreview, 300);
+}
+
+async function _doPreview() {
+  const empId   = document.getElementById('emp-select').value;
+  const totalH  = parseFloat(document.getElementById('total-hours').value || 0);
+  const holH    = parseFloat(document.getElementById('holiday-hours').value || 0);
+  const stdRate = parseFloat(document.getElementById('std-rate').value || 0);
+  const otRate  = parseFloat(document.getElementById('ot-rate').value || 0);
+  const fedWh   = parseFloat(document.getElementById('fed-wh').value || 0);
+  const stateWh = parseFloat(document.getElementById('state-wh').value || 0);
+  const start   = document.getElementById('period-start').value;
+  const year    = start ? parseInt(start.split('-')[0]) : new Date().getFullYear();
+
+  // OT indicator
+  const otH = Math.max(0, totalH - OT_THRESHOLD);
+  const otInd = document.getElementById('ot-indicator');
+  const otHint = document.getElementById('ot-hours-hint');
+  if (otInd) {
+    otInd.style.display = otH > 0 ? '' : 'none';
+    if (otHint) otHint.textContent = otH.toFixed(2);
+  }
+
+  if (!empId || totalH === 0 || stdRate === 0) {
+    document.getElementById('preview-panel').innerHTML =
+      '<p class="text-dim" style="font-size:12px">Select employee and enter hours to preview.</p>';
+    return;
+  }
+
+  const url = `/api/payroll/preview?emp_id=${empId}&hours=${totalH}&holiday_hours=${holH}&std_rate=${stdRate}&ot_rate=${otRate}&fed_wh=${fedWh}&state_wh=${stateWh}&year=${year}`;
+  const res = await fetch(url);
+  const d   = await res.json();
+  if (d.error) return;
+
+  const fmt = (n) => '$' + parseFloat(n||0).toLocaleString('en-US', {minimumFractionDigits:2});
+  const gross  = parseFloat(d.gross_pay || 0);
+  const net    = parseFloat(d.net_pay || 0);
+  const erTotal= parseFloat(d.employer_ss||0) + parseFloat(d.employer_medicare||0) +
+                 parseFloat(d.futa_amount||0) + parseFloat(d.suta_amount||0);
+
+  document.getElementById('preview-panel').innerHTML = `
+    <div style="font-size:12px">
+      <div style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-bottom:8px">Earnings</div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px">
+        <span>Standard (${(+d.standard_hours).toFixed(2)}h × $${(+d.standard_pay_rate||stdRate).toFixed(2)})</span>
+        <span class="mono">${fmt(d.standard_pay)}</span>
+      </div>
+      ${(+d.overtime_hours) > 0 ? `<div class="flex" style="justify-content:space-between;margin-bottom:3px">
+        <span class="text-yellow">OT (${(+d.overtime_hours).toFixed(2)}h × $${(+d.ot_rate||otRate).toFixed(2)})</span>
+        <span class="mono text-yellow">${fmt(d.overtime_pay)}</span>
+      </div>` : ''}
+      ${(+d.holiday_hours) > 0 ? `<div class="flex" style="justify-content:space-between;margin-bottom:3px">
+        <span>Holiday (${(+d.holiday_hours).toFixed(2)}h)</span>
+        <span class="mono">${fmt(d.holiday_pay)}</span>
+      </div>` : ''}
+      <div class="flex" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:6px;margin-top:6px;font-weight:700">
+        <span>Gross Pay</span><span class="mono text-green" style="font-size:15px">${fmt(gross)}</span>
+      </div>
+
+      <div style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin:12px 0 8px">Employee Deductions</div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>Social Security</span><span class="mono">${fmt(d.ss_withheld)}</span></div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>Medicare</span><span class="mono">${fmt(d.medicare_withheld)}</span></div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>Federal W/H</span><span class="mono">${fmt(fedWh)}</span></div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>State W/H</span><span class="mono">${fmt(stateWh)}</span></div>
+      <div class="flex" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:6px;margin-top:6px;font-weight:700">
+        <span>Net Pay</span><span class="mono text-accent" style="font-size:16px">${fmt(net)}</span>
+      </div>
+
+      <div style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin:12px 0 8px">Employer Taxes (not deducted)</div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>SS Match</span><span class="mono">${fmt(d.employer_ss)}</span></div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>Medicare Match</span><span class="mono">${fmt(d.employer_medicare)}</span></div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>FUTA</span><span class="mono">${fmt(d.futa_amount)}</span></div>
+      <div class="flex" style="justify-content:space-between;margin-bottom:3px"><span>SUTA (IL)</span><span class="mono">${fmt(d.suta_amount)}</span></div>
+      <div class="flex" style="justify-content:space-between;border-top:1px solid var(--border);padding-top:6px;margin-top:6px;font-weight:700">
+        <span>Total Employer Cost</span><span class="mono text-yellow">${fmt(gross + erTotal)}</span>
+      </div>
+    </div>
+  `;
+}
+
+// Init on page load for edit mode
+document.addEventListener('DOMContentLoaded', () => {
+  const empSel = document.getElementById('emp-select');
+  if (empSel && empSel.value) refreshPreview();
+});
+
+// Ctrl+S to save
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); document.getElementById('payroll-form')?.submit(); }
+});
+</script>
+{% endblock %}

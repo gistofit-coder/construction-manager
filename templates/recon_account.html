@@ -1,0 +1,417 @@
+{% extends "base.html" %}
+{% block title %}{{ acct.account_name }} — Reconciliation{% endblock %}
+{% block topbar_title %}🏦 {{ acct.account_name }}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reconciliation">Bank Reconciliation</a> / {{ acct.account_name }}{% endblock %}
+
+{% block content %}
+<!-- ── Stats Tiles ── -->
+<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:14px">
+  <div class="kpi-tile">
+    <div class="kpi-label">Total Transactions</div>
+    <div class="kpi-value">{{ stats.total or 0 }}</div>
+  </div>
+  <div class="kpi-tile {% if stats.unmatched %}yellow{% endif %}">
+    <div class="kpi-label">Unmatched</div>
+    <div class="kpi-value {% if stats.unmatched %}text-yellow{% endif %}">{{ stats.unmatched or 0 }}</div>
+  </div>
+  <div class="kpi-tile green">
+    <div class="kpi-label">Matched</div>
+    <div class="kpi-value text-green">{{ stats.matched or 0 }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Excluded</div>
+    <div class="kpi-value text-dim">{{ stats.excluded or 0 }}</div>
+  </div>
+  <div class="kpi-tile green">
+    <div class="kpi-label">Total Credits</div>
+    <div class="kpi-value" style="font-size:14px">${{ '{:,.2f}'.format(stats.total_credits or 0) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Total Debits</div>
+    <div class="kpi-value" style="font-size:14px">${{ '{:,.2f}'.format(stats.total_debits or 0) }}</div>
+  </div>
+</div>
+
+<!-- ── Toolbar ── -->
+<div class="card" style="margin-bottom:12px">
+  <div class="card-body" style="padding:10px 14px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:center">
+      <div class="form-group" style="margin:0">
+        <label>Status</label>
+        <select name="status" style="min-width:130px" onchange="this.form.submit()">
+          {% for s in ['Unmatched','Auto-Matched','Manual-Matched','Excluded','All'] %}
+          <option value="{{ s }}" {% if s == status_f %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>From</label>
+        <input type="date" name="start" value="{{ start_date }}" style="width:130px">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>To</label>
+        <input type="date" name="end" value="{{ end_date }}" style="width:130px">
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if start_date or end_date or status_f != 'Unmatched' %}
+        <a href="/reconciliation/{{ acct.id }}" class="btn btn-outline btn-sm">Clear</a>
+      {% endif %}
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button type="button" class="btn btn-outline btn-sm"
+                onclick="runAutoMatch({{ acct.id }})">🔄 Re-run Auto-Match</button>
+        <a href="/reconciliation/{{ acct.id }}/export?status={{ status_f }}" class="btn btn-outline btn-sm">⬇ Export</a>
+        <a href="/reconciliation/{{ acct.id }}/session" class="btn btn-outline btn-sm">📋 Sessions</a>
+        <a href="/reconciliation/{{ acct.id }}/import" class="btn btn-primary btn-sm">⬆ Import CSV</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Transactions Table ── -->
+<div class="card">
+  <div class="card-body no-pad">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:105px">Date</th>
+            <th>Bank Description</th>
+            <th style="width:90px;text-align:right">Amount</th>
+            <th style="width:70px;text-align:center">Type</th>
+            <th style="width:110px">Status</th>
+            <th>Matched Ledger Entry</th>
+            <th style="width:160px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in transactions %}
+          <tr id="txn-{{ t.id }}" class="{% if t.match_status == 'Unmatched' %}row-unmatched{% elif t.match_status in ['Auto-Matched','Manual-Matched'] %}row-matched{% endif %}">
+            <td class="mono text-dim" style="font-size:11px">{{ t.transaction_date }}</td>
+            <td>
+              <div style="font-size:12px">{{ t.description or '—' }}</div>
+              {% if t.reference_number %}
+              <div class="text-dim" style="font-size:10px">Ref: {{ t.reference_number }}</div>
+              {% endif %}
+              {% if t.notes and t.match_status == 'Excluded' %}
+              <div class="text-dim" style="font-size:10px;font-style:italic">{{ t.notes }}</div>
+              {% endif %}
+            </td>
+            <td style="text-align:right">
+              <span class="mono {% if t.transaction_type == 'Credit' %}text-green{% else %}text-dim{% endif %}" style="font-weight:600">
+                {% if t.transaction_type == 'Debit' %}−{% else %}+{% endif %}${{ '{:,.2f}'.format(t.amount) }}
+              </span>
+            </td>
+            <td style="text-align:center">
+              <span class="badge {% if t.transaction_type == 'Credit' %}badge-green{% else %}badge-gray{% endif %}" style="font-size:9px">
+                {{ t.transaction_type }}
+              </span>
+            </td>
+            <td>
+              {% set status_colors = {
+                'Unmatched': 'yellow',
+                'Auto-Matched': 'blue',
+                'Manual-Matched': 'green',
+                'Excluded': 'gray',
+                'Needs-Review': 'red',
+              } %}
+              <span class="badge badge-{{ status_colors.get(t.match_status, 'gray') }}" style="font-size:9px">
+                {{ t.match_status }}
+              </span>
+            </td>
+            <td style="font-size:11px">
+              {% if t.ledger_desc %}
+              <div style="font-weight:500">{{ t.ledger_desc[:40] }}{% if t.ledger_desc|length > 40 %}…{% endif %}</div>
+              <div class="text-dim">{{ t.ledger_date }} · {{ t.category or '' }}{% if t.job_code %} · {{ t.job_code }}{% endif %}</div>
+              {% elif t.match_status == 'Excluded' %}
+              <span class="text-dim" style="font-style:italic">Excluded</span>
+              {% else %}
+              <button class="btn btn-xs btn-outline"
+                      onclick="openMatchPicker({{ t.id }}, {{ t.amount }}, '{{ t.transaction_date }}')">
+                🔗 Find Match
+              </button>
+              <button class="btn btn-xs btn-outline" style="margin-left:4px"
+                      onclick="openCreateLedger({{ t.id }}, '{{ t.description|replace("'","") }}', {{ t.amount }}, '{{ t.transaction_date }}')">
+                ➕ Create Entry
+              </button>
+              {% endif %}
+            </td>
+            <td>
+              <div class="flex gap-4">
+                {% if t.match_status in ['Auto-Matched','Manual-Matched'] %}
+                <button class="btn btn-xs btn-outline" onclick="unmatch({{ t.id }})" title="Remove match">↩ Unmatch</button>
+                {% elif t.match_status == 'Unmatched' %}
+                <button class="btn btn-xs btn-outline"
+                        onclick="excludeTxn({{ t.id }})" title="Exclude (bank fee, transfer)">🚫 Exclude</button>
+                {% elif t.match_status == 'Excluded' %}
+                <button class="btn btn-xs btn-outline" onclick="unmatch({{ t.id }})" title="Un-exclude">↩ Restore</button>
+                {% endif %}
+                <button class="btn btn-xs btn-danger" onclick="deleteTxn({{ t.id }})" title="Delete">🗑</button>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7" style="text-align:center;padding:40px" class="text-dim">
+              <div style="font-size:32px;margin-bottom:8px">🏦</div>
+              No transactions found{% if status_f != 'All' %} with status "{{ status_f }}"{% endif %}.
+              <br>
+              <a href="/reconciliation/{{ acct.id }}/import" class="btn btn-primary btn-sm" style="margin-top:12px">⬆ Import Bank Statement</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── Manual Match Picker Modal ── -->
+<div class="modal-overlay" id="modal-match">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-header">
+      <h3>🔗 Find Matching Ledger Entry</h3>
+      <button class="modal-close" onclick="closeModal('modal-match')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="flex gap-8" style="margin-bottom:12px">
+        <input type="text" id="match-search" placeholder="Search by description, vendor, job code…"
+               style="flex:1" oninput="searchLedger()">
+        <span class="text-dim" style="align-self:center;font-size:12px">Amount: $<span id="match-amount">0</span></span>
+      </div>
+      <div id="match-results" style="max-height:320px;overflow-y:auto">
+        <p class="text-dim" style="text-align:center;padding:20px">Searching…</p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-match')">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Create Ledger Entry Modal ── -->
+<div class="modal-overlay" id="modal-create-ledger">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <h3>➕ Create Ledger Entry</h3>
+      <button class="modal-close" onclick="closeModal('modal-create-ledger')">×</button>
+    </div>
+    <div class="modal-body">
+      <p id="create-ledger-info" class="text-dim" style="font-size:12px;margin-bottom:12px"></p>
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Category</label>
+          <input type="text" id="cl-category" placeholder="e.g. Bank Fee, Office Supplies">
+        </div>
+        <div class="form-group">
+          <label>Job Code (optional)</label>
+          <input type="text" id="cl-job-code" placeholder="">
+        </div>
+        <div class="form-group">
+          <label>Vendor (optional)</label>
+          <input type="text" id="cl-vendor" placeholder="">
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <input type="text" id="cl-notes" placeholder="">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-create-ledger')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmCreateLedger()">➕ Create & Match</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Exclude Modal ── -->
+<div class="modal-overlay" id="modal-exclude">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <h3>🚫 Exclude Transaction</h3>
+      <button class="modal-close" onclick="closeModal('modal-exclude')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Reason</label>
+        <input type="text" id="exclude-notes" placeholder="e.g. Bank fee, Transfer, Duplicate"
+               value="Bank fee">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-exclude')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmExclude()">🚫 Exclude</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.row-unmatched { background: rgba(243,156,18,0.03); }
+.row-matched   { background: rgba(39,174,96,0.03); }
+</style>
+<script>
+const ACCT_ID = {{ acct.id }};
+let _matchBtId   = null;
+let _matchAmount = 0;
+let _excludeBtId = null;
+let _createBtId  = null;
+let _searchTimer = null;
+
+// ── Auto-match ───────────────────────────────────────────────
+async function runAutoMatch(acctId) {
+  showToast('Running auto-match…', 'info');
+  const res  = await fetch('/api/recon/auto-match', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({account_id: acctId})
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast(`Auto-matched ${data.matched} transaction(s)`, data.matched > 0 ? 'success' : 'info');
+    if (data.matched > 0) setTimeout(() => window.location.reload(), 700);
+  }
+}
+
+// ── Unmatch ──────────────────────────────────────────────────
+async function unmatch(btId) {
+  const res  = await fetch('/api/recon/unmatch', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({bank_transaction_id: btId})
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast('Unmatched', 'success');
+    setTimeout(() => window.location.reload(), 500);
+  }
+}
+
+// ── Exclude ──────────────────────────────────────────────────
+function excludeTxn(btId) {
+  _excludeBtId = btId;
+  document.getElementById('exclude-notes').value = 'Bank fee';
+  openModal('modal-exclude');
+}
+
+async function confirmExclude() {
+  const notes = document.getElementById('exclude-notes').value;
+  const res   = await fetch('/api/recon/exclude', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({bank_transaction_id: _excludeBtId, notes})
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast('Excluded', 'success');
+    closeModal('modal-exclude');
+    setTimeout(() => window.location.reload(), 500);
+  }
+}
+
+// ── Delete ───────────────────────────────────────────────────
+async function deleteTxn(btId) {
+  if (!confirm('Delete this bank transaction?')) return;
+  const res  = await fetch(`/api/recon/transaction/${btId}/delete`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}
+  });
+  const data = await res.json();
+  if (data.success) {
+    document.getElementById('txn-'+btId)?.remove();
+    showToast('Deleted', 'success');
+  }
+}
+
+// ── Manual Match Picker ──────────────────────────────────────
+function openMatchPicker(btId, amount, date) {
+  _matchBtId   = btId;
+  _matchAmount = amount;
+  document.getElementById('match-amount').textContent = amount.toFixed(2);
+  document.getElementById('match-search').value = '';
+  openModal('modal-match');
+  searchLedger(amount);  // seed with amount-based search
+}
+
+function searchLedger(initialAmount) {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(async () => {
+    const q   = document.getElementById('match-search').value;
+    const amt = initialAmount || _matchAmount;
+    const url = `/api/recon/ledger-search?acct_id=${ACCT_ID}&q=${encodeURIComponent(q)}&amount=${amt}`;
+    const res = await fetch(url);
+    const rows = await res.json();
+    renderMatchResults(rows);
+  }, 250);
+}
+
+function renderMatchResults(rows) {
+  const div = document.getElementById('match-results');
+  if (!rows.length) {
+    div.innerHTML = '<p class="text-dim" style="text-align:center;padding:20px">No matching ledger entries found.</p>';
+    return;
+  }
+  div.innerHTML = `<table style="width:100%">
+    <thead><tr>
+      <th>Date</th><th>Description</th><th>Category</th>
+      <th style="text-align:right">Amount</th><th style="width:80px"></th>
+    </tr></thead>
+    <tbody>
+    ${rows.map(r => `
+      <tr>
+        <td class="mono text-dim" style="font-size:11px">${r.entry_date}</td>
+        <td style="font-size:12px">${r.description || '—'}${r.vendor ? '<br><span class="text-dim" style="font-size:10px">'+r.vendor+'</span>' : ''}</td>
+        <td style="font-size:11px" class="text-dim">${r.category || ''}${r.job_code ? ' · '+r.job_code : ''}</td>
+        <td style="text-align:right" class="mono">$${(+r.amount).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+        <td><button class="btn btn-xs btn-primary" onclick="doMatch(${r.id})">Match</button></td>
+      </tr>
+    `).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function doMatch(ledgerId) {
+  const res  = await fetch('/api/recon/match', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({bank_transaction_id: _matchBtId, ledger_id: ledgerId})
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast('Matched ✅', 'success');
+    closeModal('modal-match');
+    setTimeout(() => window.location.reload(), 500);
+  } else {
+    showToast(data.error || 'Match failed', 'error');
+  }
+}
+
+// ── Create Ledger Entry ──────────────────────────────────────
+function openCreateLedger(btId, desc, amount, date) {
+  _createBtId = btId;
+  document.getElementById('create-ledger-info').textContent =
+    `${desc} — $${parseFloat(amount).toFixed(2)} on ${date}`;
+  document.getElementById('cl-category').value = '';
+  document.getElementById('cl-job-code').value = '';
+  document.getElementById('cl-vendor').value = '';
+  document.getElementById('cl-notes').value = '';
+  openModal('modal-create-ledger');
+}
+
+async function confirmCreateLedger() {
+  const res  = await fetch('/api/recon/create-ledger', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      bank_transaction_id: _createBtId,
+      category:  document.getElementById('cl-category').value,
+      job_code:  document.getElementById('cl-job-code').value,
+      vendor:    document.getElementById('cl-vendor').value,
+      notes:     document.getElementById('cl-notes').value,
+    })
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast('Ledger entry created & matched ✅', 'success');
+    closeModal('modal-create-ledger');
+    setTimeout(() => window.location.reload(), 500);
+  } else {
+    showToast(data.error || 'Failed', 'error');
+  }
+}
+</script>
+{% endblock %}

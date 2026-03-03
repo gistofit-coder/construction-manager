@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Employees — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}👷 Employees{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Employees{% endblock %}
+
+{% block content %}
+<div class="section-header">
+  <h2>Employee Roster</h2>
+  <div class="actions">
+    <a href="/employees/new" class="btn btn-primary">+ New Employee</a>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div class="card-body" style="padding:12px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="flex:1;min-width:180px;margin:0">
+        <label>Search</label>
+        <input type="search" name="q" value="{{ q }}" placeholder="Name, occupation…" class="search">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Status</label>
+        <select name="status">
+          <option value="">All</option>
+          <option value="Active" {% if status_filter=='Active' %}selected{% endif %}>Active</option>
+          <option value="Inactive" {% if status_filter=='Inactive' %}selected{% endif %}>Inactive</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if q or status_filter %}<a href="/employees" class="btn btn-outline btn-sm">Clear</a>{% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body no-pad">
+    {% if employees %}
+    <div class="table-wrap">
+      <table id="employees-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Name</th><th>Occupation</th>
+            <th style="text-align:right">Bill Rate</th>
+            <th style="text-align:right">Cost Rate</th>
+            <th style="text-align:right">YTD Gross</th>
+            <th>Status</th><th>Hire Date</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in employees %}
+          <tr>
+            <td class="mono dim">{{ e.emp_id }}</td>
+            <td>
+              <a href="/employees/{{ e.emp_id }}" style="color:var(--text-bright);text-decoration:none;font-weight:500">
+                {{ e.first_name }} {{ e.last_name }}
+              </a>
+            </td>
+            <td class="dim">{{ e.occupation or '—' }}</td>
+            <td class="amount">
+              {% if e.current_bill_rate %}<span class="text-green">${{ '{:.2f}'.format(e.current_bill_rate) }}/hr</span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td class="amount">
+              {% if e.current_cost_rate %}${{ '{:.2f}'.format(e.current_cost_rate) }}/hr
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td class="amount">
+              {% if e.ytd_gross %}<span class="text-accent">${{ '{:,.2f}'.format(e.ytd_gross) }}</span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td>
+              <span class="badge badge-{% if e.status=='Active' %}green{% else %}gray{% endif %}">
+                {{ e.status }}
+              </span>
+            </td>
+            <td class="dim mono">{{ e.hire_date or '—' }}</td>
+            <td>
+              <a href="/employees/{{ e.emp_id }}/edit" class="btn btn-outline btn-xs">Edit</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <div class="icon">👷</div>
+      {% if q %}<p>No employees matching "{{ q }}"</p>
+      {% else %}<p>No employees yet. <a href="/employees/new" class="text-accent">Add your first employee →</a></p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => initSortableTable('employees-table'));
+</script>
+{% endblock %}

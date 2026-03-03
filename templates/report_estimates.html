@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Estimate Win Rate {{ year }} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📋 Estimate Win Rate{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reports">Reports</a> / Estimate Win Rate{% endblock %}
+
+{% block content %}
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center">
+  <h2 style="font-size:18px;font-weight:700">Estimate Win Rate — {{ year }}</h2>
+  <form method="GET" class="flex gap-8" style="margin-left:auto">
+    <select name="year" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print</button>
+  </form>
+</div>
+
+<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:16px">
+  <div class="kpi-tile"><div class="kpi-label">Total Estimates</div><div class="kpi-value">{{ total_count }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">Total Value</div><div class="kpi-value">${{ '{:,.0f}'.format(total_value) }}</div></div>
+  <div class="kpi-tile green"><div class="kpi-label">Won</div><div class="kpi-value text-green">{{ won_count }}</div><div class="kpi-sub">${{ '{:,.0f}'.format(won_value) }}</div></div>
+  <div class="kpi-tile {% if win_rate_count >= 50 %}green{% elif win_rate_count >= 25 %}yellow{% else %}red{% endif %}">
+    <div class="kpi-label">Win Rate (Count)</div>
+    <div class="kpi-value">{{ win_rate_count }}%</div>
+  </div>
+  <div class="kpi-tile {% if win_rate_value >= 50 %}green{% elif win_rate_value >= 25 %}yellow{% else %}red{% endif %}">
+    <div class="kpi-label">Win Rate (Value)</div>
+    <div class="kpi-value">{{ win_rate_value }}%</div>
+  </div>
+  {% set rejected = by_status.get('Rejected', {}) %}
+  <div class="kpi-tile red"><div class="kpi-label">Lost</div><div class="kpi-value text-red">{{ rejected.cnt or 0 }}</div><div class="kpi-sub">${{ '{:,.0f}'.format((rejected.total or 0)|float) }}</div></div>
+</div>
+
+<!-- Status Breakdown -->
+<div class="grid-2" style="gap:16px;margin-bottom:16px">
+  <div class="card">
+    <div class="card-header"><span class="card-title">By Status</span></div>
+    <div class="card-body no-pad">
+      <table>
+        <thead><tr><th>Status</th><th style="text-align:right">Count</th><th style="text-align:right">Value</th><th style="text-align:right">Avg</th></tr></thead>
+        <tbody>
+          {% for s in ['Draft','Sent','Accepted','Rejected','Revised'] %}
+          {% set sd = by_status.get(s, {}) %}
+          <tr>
+            <td>
+              {% set sc = {'Draft':'gray','Sent':'blue','Accepted':'green','Rejected':'red','Revised':'yellow'} %}
+              <span class="badge badge-{{ sc.get(s,'gray') }}" style="font-size:10px">{{ s }}</span>
+            </td>
+            <td style="text-align:right" class="mono">{{ sd.cnt or 0 }}</td>
+            <td style="text-align:right" class="mono">${{ '{:,.0f}'.format((sd.total or 0)|float) }}</td>
+            <td style="text-align:right" class="mono text-dim">${{ '{:,.0f}'.format((sd.avg_val or 0)|float) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><span class="card-title">Win Rate Visual</span></div>
+    <div class="card-body">
+      <div style="margin-bottom:16px">
+        <div class="flex" style="justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span>Won ({{ won_count }} bids)</span><span class="text-green">{{ win_rate_count }}%</span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
+          <div style="width:{{ win_rate_count }}%;height:100%;background:var(--green);border-radius:4px;transition:width 0.5s"></div>
+        </div>
+      </div>
+      <div>
+        <div class="flex" style="justify-content:space-between;font-size:12px;margin-bottom:4px">
+          <span>Value Won (${{ '{:,.0f}'.format(won_value) }})</span><span class="text-green">{{ win_rate_value }}%</span>
+        </div>
+        <div style="background:var(--border);border-radius:4px;height:20px;overflow:hidden">
+          <div style="width:{{ win_rate_value }}%;height:100%;background:var(--blue);border-radius:4px;transition:width 0.5s"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Estimates -->
+<div class="card">
+  <div class="card-header"><span class="card-title">Recent Estimates ({{ year }})</span></div>
+  <div class="card-body no-pad">
+    <table>
+      <thead><tr><th>Estimate #</th><th>Date</th><th>Client</th><th>Job</th><th style="text-align:right">Value</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td><a href="/estimates/{{ loop.index }}" class="mono" style="font-size:11px">{{ r.estimate_number }}</a></td>
+          <td class="mono text-dim" style="font-size:11px">{{ r.estimate_date }}</td>
+          <td style="font-size:11px">{{ r.client_name or '—' }}</td>
+          <td>{% if r.job_code %}<span class="badge badge-blue" style="font-size:9px">{{ r.job_code }}</span>{% else %}—{% endif %}</td>
+          <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(r.total_estimate) }}</td>
+          <td>
+            {% set sc = {'Draft':'gray','Sent':'blue','Accepted':'green','Rejected':'red','Revised':'yellow'} %}
+            <span class="badge badge-{{ sc.get(r.status,'gray') }}" style="font-size:9px">{{ r.status }}</span>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="text-dim" style="text-align:center;padding:20px">No estimates found for {{ year }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

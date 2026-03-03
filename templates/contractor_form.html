@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}{% if mode=='new' %}New Contractor{% else %}Edit: {{ contractor.company_name }}{% endif %}{% endblock %}
+{% block topbar_title %}{% if mode=='new' %}New Contractor{% else %}Edit Contractor{% endif %}{% endblock %}
+{% block breadcrumb %}
+  <a href="/">Home</a> / <a href="/contractors">Contractors</a> /
+  {% if mode=='edit' %}<a href="/contractors/{{ contractor.id }}">{{ contractor.company_name }}</a> / {% endif %}
+  {% if mode=='new' %}New{% else %}Edit{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:680px">
+  <div class="card-header">
+    <span class="card-title">{% if mode=='new' %}➕ New Contractor / Vendor{% else %}✏️ Edit: {{ contractor.company_name }}{% endif %}</span>
+  </div>
+  <div class="card-body">
+    <form method="POST" id="contractor-form">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>Company Name <span class="req">*</span></label>
+          <input type="text" name="company_name" value="{{ contractor.company_name or '' }}"
+                 required autofocus placeholder="ABC Electrical LLC">
+        </div>
+
+        <div class="form-group">
+          <label>Contact Person</label>
+          <input type="text" name="contact_person" value="{{ contractor.contact_person or '' }}"
+                 placeholder="Jane Doe">
+        </div>
+
+        <div class="form-group">
+          <label>Trade Type</label>
+          <input type="text" name="trade_type" value="{{ contractor.trade_type or '' }}"
+                 placeholder="Electrical, Plumbing, HVAC…" list="trade-list">
+          <datalist id="trade-list">
+            {% for t in trades %}<option value="{{ t }}">{% endfor %}
+            <option value="Electrical">
+            <option value="Plumbing">
+            <option value="HVAC">
+            <option value="Roofing">
+            <option value="Concrete">
+            <option value="Framing">
+            <option value="Drywall">
+            <option value="Painting">
+            <option value="Flooring">
+            <option value="Landscaping">
+            <option value="Masonry">
+            <option value="Insulation">
+            <option value="General Labor">
+          </datalist>
+        </div>
+
+        <div class="form-group">
+          <label>Preference Rank
+            <span class="tip">0–5 stars, higher = preferred</span>
+          </label>
+          <select name="rank_preference">
+            {% for i in range(6) %}
+            <option value="{{ i }}" {% if (contractor.rank_preference or 0)|int == i %}selected{% endif %}>
+              {{ '⭐' * i if i > 0 else 'None' }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Phone (Office)</label>
+          <input type="tel" name="phone" value="{{ contractor.phone or '' }}"
+                 placeholder="(555) 555-5555">
+        </div>
+
+        <div class="form-group">
+          <label>Cell / Mobile</label>
+          <input type="tel" name="cell" value="{{ contractor.cell or '' }}"
+                 placeholder="(555) 555-5556">
+        </div>
+
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" name="email" value="{{ contractor.email or '' }}"
+                 placeholder="contact@company.com">
+        </div>
+
+        <div class="form-group">
+          <label>Vendor Type <span class="tip">Drives COI requirement &amp; 1099 reporting</span></label>
+          <select name="vendor_type">
+            <option value="Subcontractor" {% if (contractor.vendor_type or 'Subcontractor')=='Subcontractor' %}selected{% endif %}>Subcontractor — requires COI &amp; W9, 1099-eligible</option>
+            <option value="Supplier" {% if contractor.vendor_type=='Supplier' %}selected{% endif %}>Supplier / Materials — no COI needed</option>
+            <option value="Service Provider" {% if contractor.vendor_type=='Service Provider' %}selected{% endif %}>Service Provider — utility, SaaS, etc.</option>
+            <option value="Government/Tax" {% if contractor.vendor_type=='Government/Tax' %}selected{% endif %}>Government / Tax Authority</option>
+            <option value="Other" {% if contractor.vendor_type=='Other' %}selected{% endif %}>Other</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Website</label>
+          <input type="url" name="website" value="{{ contractor.website or '' }}"
+               placeholder="https://company.com">
+        </div>
+
+        <div class="form-group full">
+          <label>Address</label>
+          <input type="text" name="address" value="{{ contractor.address or '' }}"
+                 placeholder="123 Trade St, City, IL 60601">
+        </div>
+
+        <div class="form-group">
+          <label>License Number</label>
+          <input type="text" name="license_number" value="{{ contractor.license_number or '' }}"
+                 placeholder="IL-EL-99999">
+        </div>
+
+        <div class="form-group" style="align-self:flex-end">
+          <div class="check-group">
+            <input type="checkbox" name="requires_1099" id="chk-1099" value="1"
+                   {% if contractor.requires_1099 %}checked{% endif %}>
+            <label for="chk-1099">
+              Requires 1099-NEC
+              <span class="tip">Check if paid $600+ and not a corporation</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group full">
+          <label>Notes</label>
+          <textarea name="notes" rows="3" placeholder="Any additional notes, specialties, terms…">{{ contractor.notes or '' }}</textarea>
+        </div>
+      </div>
+
+      <hr class="dim">
+      <div class="flex gap-8">
+        <button type="submit" class="btn btn-primary">💾 Save Contractor</button>
+        <a href="/contractors{% if mode=='edit' %}/{{ contractor.id }}{% endif %}" class="btn btn-outline">Cancel</a>
+        {% if mode=='edit' %}
+        <form method="POST" action="/contractors/{{ contractor.id }}/delete" style="margin-left:auto"
+              onsubmit="return confirm('Archive {{ contractor.company_name }}?')">
+          <button type="submit" class="btn btn-danger btn-sm">Archive</button>
+        </form>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); document.getElementById('contractor-form').submit(); }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Reports — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}📈 Reports & Analytics{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Reports{% endblock %}
+
+{% block content %}
+<!-- ── YTD KPI Tiles ── -->
+<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:20px">
+  <div class="kpi-tile green">
+    <div class="kpi-label">YTD Revenue</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(ytd_revenue) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">YTD Expenses</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(ytd_expenses) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">YTD Payroll</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(ytd_payroll) }}</div>
+  </div>
+  <div class="kpi-tile {% if ytd_profit > 0 %}green{% elif ytd_profit < 0 %}red{% endif %}">
+    <div class="kpi-label">YTD Net Profit</div>
+    <div class="kpi-value {% if ytd_profit > 0 %}text-green{% elif ytd_profit < 0 %}text-red{% endif %}">
+      ${{ '{:,.0f}'.format(ytd_profit) }}
+    </div>
+  </div>
+  <div class="kpi-tile blue">
+    <div class="kpi-label">Active Jobs</div>
+    <div class="kpi-value">{{ active_jobs }}</div>
+  </div>
+  <div class="kpi-tile {% if overdue_inv_count %}yellow{% endif %}">
+    <div class="kpi-label">Overdue AR</div>
+    <div class="kpi-value {% if overdue_inv_count %}text-yellow{% endif %}">${{ '{:,.0f}'.format(overdue_inv_amount) }}</div>
+    <div class="kpi-sub">{{ overdue_inv_count }} invoice{{ 's' if overdue_inv_count != 1 }}</div>
+  </div>
+</div>
+
+<h2 style="font-size:14px;font-weight:600;margin-bottom:12px">Available Reports</h2>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
+  {% for icon, title, url, desc, color in [
+    ('💰', 'P&L Summary',           '/reports/pl',          'Monthly revenue, expenses, and profit/loss for any year', 'green'),
+    ('📊', 'Income Statement',        '/reports/income-statement', 'Quarterly income statement — Revenue, COGS, Expenses, Net Income', 'green'),
+    ('🏗️', 'Job Profitability',     '/reports/jobs',        'Revenue, cost, and margin analysis per job', 'blue'),
+    ('💧', 'Cash Flow',             '/reports/cashflow',    'Monthly inflows vs outflows and running balance', 'blue'),
+    ('🧾', 'Payroll Tax Ledger',    '/reports/payroll-tax', 'Quarterly 941, FUTA, SUTA liabilities and employee YTD', 'yellow'),
+    ('📋', 'Estimate Win Rate',     '/reports/estimates',   'Bid volume, win rate, and revenue captured', 'gray'),
+    ('📅', 'Monthly Snapshot',      '/reports/snapshot',    'One-page executive summary for any month', 'green'),
+    ('🏷️', 'Category Breakdown',   '/reports/categories',  'Spending by expense category with trend lines', 'gray'),
+    ('📬', 'Accounts Receivable',   '/reports/ar',          'Invoice aging: current, 30, 60, 90+ days overdue', 'red'),
+  ] %}
+  <a href="{{ url }}" class="card hover-card" style="text-decoration:none;color:inherit">
+    <div class="card-body">
+      <div style="font-size:28px;margin-bottom:8px">{{ icon }}</div>
+      <div style="font-weight:700;font-size:14px;margin-bottom:4px">{{ title }}</div>
+      <div class="text-dim" style="font-size:12px;line-height:1.5">{{ desc }}</div>
+      <div style="margin-top:12px">
+        <span class="badge badge-{{ color }}" style="font-size:9px">View Report →</span>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+{% if open_estimates %}
+<div class="card" style="margin-top:16px;border-left:4px solid var(--blue)">
+  <div class="card-body" style="padding:12px 16px">
+    <div class="flex gap-8" style="align-items:center">
+      <span>📋 <strong>{{ open_estimates }}</strong> estimate{{ 's' if open_estimates != 1 }} still open (Draft or Sent)</span>
+      <a href="/reports/estimates" class="btn btn-outline btn-xs" style="margin-left:auto">View Win Rate →</a>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

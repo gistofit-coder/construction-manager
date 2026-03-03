@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Actuals vs {{ est.estimate_number }} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📊 Actuals vs Estimate{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/estimates">Estimates</a> / <a href="/estimates/{{ est.id }}">{{ est.estimate_number }}</a> / Actuals{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center;flex-wrap:wrap">
+  <div>
+    <div style="font-size:18px;font-weight:700">Actuals vs Estimate — {{ est.estimate_number }}</div>
+    <div class="text-dim" style="font-size:12px">
+      {{ est.client_name or '' }}{% if est.job_code %} · <span class="badge badge-blue">{{ est.job_code }}</span>{% endif %}
+    </div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <a href="/estimates/{{ est.id }}" class="btn btn-outline btn-sm">← Back to Estimate</a>
+    <button class="btn btn-outline btn-sm" onclick="window.print()">🖨 Print</button>
+  </div>
+</div>
+
+<!-- Summary Tiles -->
+<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+  <div class="kpi-tile">
+    <div class="kpi-label">Estimated Total</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(totals.total_estimate) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Actual Cost (so far)</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(total_act_all) }}</div>
+  </div>
+  <div class="kpi-tile {% if total_variance < 0 %}red{% elif total_variance > 0 %}green{% endif %}">
+    <div class="kpi-label">Variance</div>
+    <div class="kpi-value {% if total_variance < 0 %}text-red{% elif total_variance > 0 %}text-green{% endif %}">
+      {% if total_variance > 0 %}+{% endif %}${{ '{:,.0f}'.format(total_variance) }}
+    </div>
+    <div class="kpi-sub">{% if total_variance < 0 %}over budget{% elif total_variance > 0 %}under budget{% else %}on budget{% endif %}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Labor Hours (actual)</div>
+    <div class="kpi-value">{{ '%.1f'|format(actual_labor_hours) }}h</div>
+    <div class="kpi-sub">${{ '{:,.0f}'.format(actual_labor) }} labor cost</div>
+  </div>
+</div>
+
+<!-- Category Comparison Table -->
+<div class="card">
+  <div class="card-header"><span class="card-title">Cost by Category</span></div>
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th style="text-align:right;width:100px">Est. Labor</th>
+          <th style="text-align:right;width:100px">Est. Materials</th>
+          <th style="text-align:right;width:90px">Est. Subs</th>
+          <th style="text-align:right;width:90px">Est. Other</th>
+          <th style="text-align:right;width:100px;border-left:2px solid var(--border)">Estimated</th>
+          <th style="text-align:right;width:100px">Actual</th>
+          <th style="text-align:right;width:100px">Variance</th>
+          <th style="text-align:right;width:70px">%</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in comparison %}
+        <tr class="{% if row.over_budget %}row-overdue{% endif %}">
+          <td style="font-weight:500;font-size:12px">{{ row.category }}</td>
+          <td style="text-align:right" class="mono text-dim">${{ '{:,.2f}'.format(row.est_labor) }}</td>
+          <td style="text-align:right" class="mono text-dim">${{ '{:,.2f}'.format(row.est_materials) }}</td>
+          <td style="text-align:right" class="mono text-dim">${{ '{:,.2f}'.format(row.est_subs) }}</td>
+          <td style="text-align:right" class="mono text-dim">${{ '{:,.2f}'.format(row.est_other) }}</td>
+          <td style="text-align:right;font-weight:600;border-left:2px solid var(--border)" class="mono">
+            ${{ '{:,.2f}'.format(row.est_total) }}
+          </td>
+          <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(row.act_total) }}</td>
+          <td style="text-align:right;font-weight:600" class="mono
+               {% if row.variance < 0 %}text-red{% elif row.variance > 0 %}text-green{% endif %}">
+            {% if row.variance != 0 %}{% if row.variance > 0 %}+{% endif %}${{ '{:,.2f}'.format(row.variance) }}{% else %}$0.00{% endif %}
+          </td>
+          <td style="text-align:right" class="{% if row.variance < 0 %}text-red{% elif row.variance > 0 %}text-green{% endif %}">
+            {% if row.est_total %}{{ row.variance_pct }}%{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="text-dim" style="text-align:center;padding:30px">
+          {% if not est.job_code %}
+            No job linked — attach a job to this estimate to see actuals.
+          {% else %}
+            No line items found.
+          {% endif %}
+        </td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr style="font-weight:800;font-size:13px;background:var(--bg)">
+          <td>TOTALS</td>
+          <td colspan="4"></td>
+          <td style="text-align:right;border-left:2px solid var(--border)" class="mono">
+            ${{ '{:,.2f}'.format(total_est_all) }}
+          </td>
+          <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(total_act_all) }}</td>
+          <td style="text-align:right" class="mono
+               {% if total_variance < 0 %}text-red{% elif total_variance > 0 %}text-green{% endif %}">
+            {% if total_variance > 0 %}+{% endif %}${{ '{:,.2f}'.format(total_variance) }}
+          </td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- Budget progress bar -->
+{% if total_est_all > 0 %}
+{% set pct_used = [(total_act_all / total_est_all * 100), 200]|min %}
+<div class="card" style="margin-top:12px">
+  <div class="card-header"><span class="card-title">Budget Utilization</span></div>
+  <div class="card-body">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="flex:1;background:var(--border);border-radius:4px;height:18px;overflow:hidden">
+        <div style="width:{{ [pct_used, 100]|min }}%;height:100%;border-radius:4px;
+             background:{% if pct_used > 100 %}var(--red){% elif pct_used > 85 %}var(--yellow){% else %}var(--green){% endif %}">
+        </div>
+      </div>
+      <span class="mono" style="min-width:60px;text-align:right;font-weight:700;
+           color:{% if pct_used > 100 %}var(--red){% elif pct_used > 85 %}var(--yellow){% else %}var(--green){% endif %}">
+        {{ '%.1f'|format(pct_used) }}%
+      </span>
+    </div>
+    <div class="text-dim" style="font-size:11px;margin-top:6px">
+      ${{ '{:,.2f}'.format(total_act_all) }} spent of ${{ '{:,.2f}'.format(total_est_all) }} budgeted direct costs
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

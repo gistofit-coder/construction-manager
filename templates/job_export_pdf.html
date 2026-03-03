@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Job Summary — {{ job.job_code }} — {{ config.company_name or '' }}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Garamond', 'Georgia', serif; font-size: 12px; color: #111; background: #fff; padding: 32px; max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 700; }
+  h2 { font-size: 14px; font-weight: 700; margin: 18px 0 6px; border-bottom: 1.5px solid #333; padding-bottom: 3px; }
+  h3 { font-size: 12px; font-weight: 700; color: #555; margin: 8px 0 4px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; }
+  th { background: #555; color: #fff; padding: 4px 6px; text-align: left; font-weight: 600; }
+  td { padding: 3px 6px; border-bottom: 1px solid #ddd; }
+  tr:last-child td { border-bottom: none; }
+  .right { text-align: right; }
+  .total-row td { font-weight: 700; border-top: 2px solid #333; }
+  .header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+  .company { font-size: 16px; font-weight: 700; }
+  .report-title { font-size: 20px; font-weight: 700; text-align: right; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+  .meta-block { border: 1px solid #ddd; border-radius: 4px; padding: 10px; }
+  .meta-label { font-size: 9px; color: #777; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
+  .meta-val { font-size: 13px; font-weight: 600; }
+  .kpi-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin: 12px 0 18px; }
+  .kpi { border: 1px solid #ddd; border-radius: 4px; padding: 8px 10px; text-align: center; }
+  .kpi-lbl { font-size: 9px; color: #777; text-transform: uppercase; }
+  .kpi-val { font-size: 16px; font-weight: 700; }
+  .green { color: #1a7a3f; }
+  .red   { color: #c00; }
+  .no-print { }
+  @media print {
+    .no-print { display: none !important; }
+    body { padding: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="no-print" style="background:#f5f5f5;padding:12px 16px;margin:-32px -32px 24px;display:flex;gap:10px;align-items:center">
+  <strong style="font-size:13px">Job Export — {{ job.job_code }}</strong>
+  <button onclick="window.print()" style="padding:6px 14px;background:#333;color:#fff;border:none;border-radius:4px;cursor:pointer">🖨 Print / Save PDF</button>
+  <a href="/jobs/{{ job.id }}/export-csv" style="padding:6px 14px;background:#fff;border:1px solid #ccc;border-radius:4px;text-decoration:none;color:#333">⬇ Download CSV</a>
+  <a href="/jobs" style="margin-left:auto;color:#555;text-decoration:none">← Back to Jobs</a>
+</div>
+
+<!-- Header -->
+<div class="header-row">
+  <div>
+    <div class="company">{{ config.company_name or 'Knautz Builders LLC.' }}</div>
+    <div style="font-size:11px;color:#777;margin-top:2px">{{ now_str }}</div>
+  </div>
+  <div class="report-title">Job Summary</div>
+</div>
+
+<!-- Job meta -->
+<div class="meta-grid">
+  <div class="meta-block">
+    <div class="meta-label">Job Code</div>
+    <div class="meta-val">{{ job.job_code }}</div>
+    <div style="margin-top:4px;font-size:11px;color:#555">{{ job.description or '' }}</div>
+  </div>
+  <div class="meta-block">
+    <div class="meta-label">Client</div>
+    <div class="meta-val">{{ job.client_name or '—' }}</div>
+    {% if job.client_email %}<div style="font-size:10px;color:#777">{{ job.client_email }}</div>{% endif %}
+    {% if job.client_phone %}<div style="font-size:10px;color:#777">{{ job.client_phone }}</div>{% endif %}
+  </div>
+  <div class="meta-block">
+    <div class="meta-label">Timeline</div>
+    <div style="font-size:12px">{{ job.start_date or '—' }} → {{ job.end_date or 'Open' }}</div>
+    <div style="margin-top:3px"><span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:{% if job.status=='Active' %}#d4f1e0{% elif job.status=='Archived' %}#e8e8e8{% else %}#fef0d0{% endif %}">{{ job.status }}</span></div>
+  </div>
+  <div class="meta-block">
+    <div class="meta-label">Contract Amount</div>
+    <div class="meta-val {% if job.contract_amount %}green{% endif %}">
+      {% if job.contract_amount %}${{ '{:,.0f}'.format(job.contract_amount) }}{% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- KPI row -->
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-lbl">Total Cost</div>
+    <div class="kpi-val red">${{ '{:,.0f}'.format(total_cost) }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-lbl">Total Invoiced</div>
+    <div class="kpi-val">${{ '{:,.0f}'.format(total_invoiced) }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-lbl">Total Collected</div>
+    <div class="kpi-val green">${{ '{:,.0f}'.format(total_paid) }}</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-lbl">Total Hours</div>
+    <div class="kpi-val">{{ '{:.1f}'.format(total_hours) }}h</div>
+  </div>
+</div>
+
+<!-- Estimates -->
+{% if estimates %}
+<h2>Estimates</h2>
+<table>
+  <thead><tr><th>Estimate #</th><th>Date</th><th>Status</th><th class="right">Amount</th></tr></thead>
+  <tbody>
+    {% for e in estimates %}
+    <tr>
+      <td>{{ e.estimate_number }}</td>
+      <td>{{ e.estimate_date }}</td>
+      <td>{{ e.status }}</td>
+      <td class="right">${{ '{:,.2f}'.format(e.total_estimate|float) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<!-- Invoices -->
+{% if invoices %}
+<h2>Invoices</h2>
+<table>
+  <thead><tr><th>Invoice #</th><th>Date</th><th>Description</th><th>Status</th><th class="right">Amount</th><th class="right">Paid</th></tr></thead>
+  <tbody>
+    {% for inv in invoices %}
+    <tr>
+      <td>{{ inv.invoice_number }}</td>
+      <td>{{ inv.invoice_date }}</td>
+      <td>{{ inv.description or '—' }}</td>
+      <td>{{ inv.status }}</td>
+      <td class="right">${{ '{:,.2f}'.format(inv.amount|float) }}</td>
+      <td class="right green">${{ '{:,.2f}'.format(inv.amount_paid|float) }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row">
+      <td colspan="4">Totals</td>
+      <td class="right">${{ '{:,.2f}'.format(total_invoiced) }}</td>
+      <td class="right green">${{ '{:,.2f}'.format(total_paid) }}</td>
+    </tr>
+  </tbody>
+</table>
+{% endif %}
+
+<!-- Ledger / Costs -->
+<h2>Costs / Ledger ({{ ledger|length }} entries)</h2>
+{% if ledger %}
+<table>
+  <thead><tr><th>Date</th><th>Vendor</th><th>Category</th><th>Description</th><th>Invoice</th><th class="right">Amount</th></tr></thead>
+  <tbody>
+    {% for r in ledger %}
+    <tr>
+      <td style="font-family:monospace">{{ r.entry_date }}</td>
+      <td>{{ r.vendor or '—' }}</td>
+      <td style="font-size:10px;color:#555">{{ r.category or '—' }}</td>
+      <td style="max-width:200px">{{ r.description or '—' }}</td>
+      <td style="font-size:10px">{{ r.invoice_number or '' }}</td>
+      <td class="right">${{ '{:,.2f}'.format(r.amount|float) }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row">
+      <td colspan="5">Total Cost</td>
+      <td class="right red">${{ '{:,.2f}'.format(total_cost) }}</td>
+    </tr>
+  </tbody>
+</table>
+{% else %}
+<p style="color:#777;font-size:11px">No ledger entries for this job.</p>
+{% endif %}
+
+<!-- Timesheet -->
+{% if timesheet %}
+<h2>Timesheet ({{ total_hours|round(1) }} hours)</h2>
+<table>
+  <thead><tr><th>Date</th><th>Person</th><th>Work Type</th><th>Billable</th><th class="right">Hours</th><th class="right">Rate</th><th class="right">Bill Amt</th><th>Description</th></tr></thead>
+  <tbody>
+    {% for t in timesheet %}
+    <tr>
+      <td style="font-family:monospace">{{ t.entry_date }}</td>
+      <td>{{ t.person_label or '—' }}</td>
+      <td style="font-size:10px;color:#555">{{ t.work_type or '—' }}</td>
+      <td style="font-size:10px">{{ t.billable or 'Billable' }}</td>
+      <td class="right">{{ '{:.2f}'.format(t.hours|float) }}</td>
+      <td class="right">${{ '{:.2f}'.format(t.bill_rate|float) }}</td>
+      <td class="right">${{ '{:.2f}'.format(t.bill_amount|float) }}</td>
+      <td style="max-width:200px;font-size:10px">{{ t.description or '—' }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row">
+      <td colspan="4">Total Hours</td>
+      <td class="right">{{ '{:.2f}'.format(total_hours) }}</td>
+      <td></td>
+      <td></td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+{% endif %}
+
+{% if job.notes %}
+<h2>Notes</h2>
+<p style="font-size:12px;white-space:pre-wrap;padding:8px;border:1px solid #ddd;border-radius:4px">{{ job.notes }}</p>
+{% endif %}
+
+<div style="margin-top:32px;padding-top:12px;border-top:1px solid #ddd;font-size:9px;color:#999">
+  Generated {{ now_str }} — {{ config.company_name or '' }} — KBWeb · Job {{ job.job_code }}
+</div>
+</body>
+</html>

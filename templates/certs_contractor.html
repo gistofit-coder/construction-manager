@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}{{ contractor.company_name }} — Certs{% endblock %}
+{% block topbar_title %}📜 Contractor Certs{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/certs">Certs Tracker</a> / {{ contractor.company_name }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center;flex-wrap:wrap">
+  <div>
+    <div style="font-size:18px;font-weight:700">{{ contractor.company_name }}</div>
+    <div class="text-dim" style="font-size:12px">
+      {% if contractor.trade_type %}{{ contractor.trade_type }} · {% endif %}
+      {% if contractor.contact_person %}{{ contractor.contact_person }}{% endif %}
+      {% if contractor.phone %} · {{ contractor.phone }}{% endif %}
+      {% if contractor.email %} · {{ contractor.email }}{% endif %}
+    </div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <a href="/certs" class="btn btn-outline btn-sm">← All Certs</a>
+    <a href="/certs/new?contractor_id={{ contractor.id }}" class="btn btn-primary btn-sm">+ Add Cert</a>
+  </div>
+</div>
+
+<!-- Cert cards -->
+{% if certs %}
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
+  {% for c in certs %}
+  <div class="card" style="border-top:3px solid
+    {% if c.status == 'Expired' %}var(--red)
+    {% elif c.status == 'Expiring Soon' %}var(--yellow)
+    {% else %}var(--green){% endif %}">
+    <div class="card-body">
+      <div class="flex gap-8" style="align-items:center;margin-bottom:10px">
+        <div style="font-weight:700;font-size:13px;flex:1">{{ c.cert_type }}</div>
+        {% if c.status == 'Expired' %}<span class="badge badge-red">Expired</span>
+        {% elif c.status == 'Expiring Soon' %}<span class="badge badge-yellow">Expiring Soon</span>
+        {% elif c.status == 'Active' %}<span class="badge badge-green">Active</span>
+        {% else %}<span class="badge badge-gray">Unknown</span>{% endif %}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:10px">
+        <div>
+          <div class="text-dim" style="font-size:10px;text-transform:uppercase">Effective</div>
+          <div class="mono">{{ c.start_date or '—' }}</div>
+        </div>
+        <div>
+          <div class="text-dim" style="font-size:10px;text-transform:uppercase">Expires</div>
+          <div class="mono {% if c.status == 'Expired' %}text-red{% elif c.status == 'Expiring Soon' %}text-yellow{% endif %}">
+            {{ c.end_date or '—' }}
+          </div>
+        </div>
+      </div>
+
+      {% if c.days_left is not none %}
+      <div class="text-dim" style="font-size:11px;margin-bottom:8px">
+        {% if c.days_left < 0 %}⚠️ Expired {{ c.days_left|abs }} days ago
+        {% elif c.days_left == 0 %}🔴 Expires today!
+        {% elif c.days_left <= 30 %}🔴 {{ c.days_left }} days remaining
+        {% elif c.days_left <= 60 %}🟡 {{ c.days_left }} days remaining
+        {% else %}✅ {{ c.days_left }} days remaining{% endif %}
+      </div>
+      {% endif %}
+
+      {% if c.cert_filename %}
+      <div class="text-dim" style="font-size:11px;margin-bottom:8px">📎 {{ c.cert_filename }}</div>
+      {% endif %}
+      {% if c.notes %}
+      <div class="text-dim" style="font-size:11px;margin-bottom:10px;border-top:1px solid var(--border);padding-top:8px">
+        {{ c.notes }}
+      </div>
+      {% endif %}
+
+      <div class="flex gap-8">
+        <button class="btn btn-outline btn-xs" onclick="openRenewModal({{ c.id }}, '{{ c.end_date or '' }}', '{{ c.cert_type }}')">♻️ Renew</button>
+        <a href="/certs/{{ c.id }}/edit" class="btn btn-outline btn-xs">✏️ Edit</a>
+        <button class="btn btn-danger btn-xs" onclick="deleteCert({{ c.id }}, this)">🗑</button>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:40px">
+    <div style="font-size:32px;margin-bottom:8px">📜</div>
+    <div style="font-weight:600;margin-bottom:8px">No certificates on file for this contractor</div>
+    <a href="/certs/new?contractor_id={{ contractor.id }}" class="btn btn-primary">+ Add Certificate</a>
+  </div>
+</div>
+{% endif %}
+
+<!-- Renew Modal -->
+<div class="modal-overlay" id="renewModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>♻️ Renew Certificate</h3>
+      <button class="modal-close" onclick="closeModal('renewModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-dim" style="font-size:12px;margin-bottom:14px">
+        Updating: <strong id="renewCertType"></strong>
+      </p>
+      <input type="hidden" id="renewCertId">
+      <div class="form-group" style="margin-bottom:12px">
+        <label>New Start Date <span class="tip">(optional)</span></label>
+        <input type="date" id="renewStartDate">
+      </div>
+      <div class="form-group">
+        <label>New Expiration Date <span class="req">*</span></label>
+        <input type="date" id="renewEndDate" required>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('renewModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitRenew()">Save Renewal</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openRenewModal(id, currentEnd, certType) {
+  document.getElementById('renewCertId').value = id;
+  document.getElementById('renewCertType').textContent = certType;
+  document.getElementById('renewEndDate').value = '';
+  document.getElementById('renewStartDate').value = '';
+  openModal('renewModal');
+}
+
+async function submitRenew() {
+  const id       = document.getElementById('renewCertId').value;
+  const end_date = document.getElementById('renewEndDate').value;
+  const start_date = document.getElementById('renewStartDate').value;
+  if (!end_date) { alert('Please enter a new expiration date.'); return; }
+  const r = await fetch(`/api/certs/${id}/renew`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ end_date, start_date })
+  });
+  const d = await r.json();
+  if (d.success) { closeModal('renewModal'); showToast('Certificate renewed!'); setTimeout(() => location.reload(), 700); }
+  else showToast(d.error || 'Failed', 'error');
+}
+
+async function deleteCert(id, btn) {
+  if (!confirm('Delete this certificate?')) return;
+  const r = await fetch(`/api/certs/${id}/delete`, {method:'POST'});
+  const d = await r.json();
+  if (d.success) { btn.closest('.card').remove(); showToast('Deleted.'); }
+  else showToast(d.error || 'Failed', 'error');
+}
+</script>
+{% endblock %}

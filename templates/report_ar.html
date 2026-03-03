@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Accounts Receivable Aging — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📬 Accounts Receivable Aging{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reports">Reports</a> / AR Aging{% endblock %}
+
+{% block content %}
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center">
+  <div>
+    <h2 style="font-size:18px;font-weight:700">Accounts Receivable Aging</h2>
+    <div class="text-dim" style="font-size:12px">As of {{ today }}</div>
+  </div>
+  <button class="btn btn-outline btn-sm" style="margin-left:auto" onclick="window.print();return false">🖨 Print</button>
+</div>
+
+<!-- Aging Tiles -->
+<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:16px">
+  <div class="kpi-tile green">
+    <div class="kpi-label">Current</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(current_total) }}</div>
+    <div class="kpi-sub">{{ current|length }} invoice{{ 's' if current|length != 1 }}</div>
+  </div>
+  <div class="kpi-tile yellow">
+    <div class="kpi-label">1–30 Days</div>
+    <div class="kpi-value text-yellow">${{ '{:,.0f}'.format(bucket_30_total) }}</div>
+    <div class="kpi-sub">{{ bucket_30|length }} invoice{{ 's' if bucket_30|length != 1 }}</div>
+  </div>
+  <div class="kpi-tile" style="border-top-color:var(--orange,#e67e22)">
+    <div class="kpi-label">31–60 Days</div>
+    <div class="kpi-value" style="color:var(--orange,#e67e22)">${{ '{:,.0f}'.format(bucket_60_total) }}</div>
+    <div class="kpi-sub">{{ bucket_60|length }} invoice{{ 's' if bucket_60|length != 1 }}</div>
+  </div>
+  <div class="kpi-tile red">
+    <div class="kpi-label">61–90 Days</div>
+    <div class="kpi-value text-red">${{ '{:,.0f}'.format(bucket_90_total) }}</div>
+    <div class="kpi-sub">{{ bucket_90|length }} invoice{{ 's' if bucket_90|length != 1 }}</div>
+  </div>
+  <div class="kpi-tile red">
+    <div class="kpi-label">90+ Days</div>
+    <div class="kpi-value text-red">${{ '{:,.0f}'.format(bucket_90p_total) }}</div>
+    <div class="kpi-sub">{{ bucket_90p|length }} invoice{{ 's' if bucket_90p|length != 1 }}</div>
+  </div>
+</div>
+
+<!-- Grand total bar -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-body" style="padding:12px 16px">
+    <div class="flex gap-8" style="align-items:center;margin-bottom:8px">
+      <strong style="font-size:14px">Total Outstanding: <span class="mono" style="color:var(--red)">${{ '{:,.2f}'.format(grand_total) }}</span></strong>
+    </div>
+    {% if grand_total %}
+    <div style="display:flex;height:16px;border-radius:4px;overflow:hidden;gap:1px">
+      {% for total, color in [(current_total,'var(--green)'),(bucket_30_total,'var(--yellow)'),(bucket_60_total,'#e67e22'),(bucket_90_total,'var(--red)'),(bucket_90p_total,'#7f0000')] %}
+      {% if total %}
+      <div style="flex:{{ total }};background:{{ color }};min-width:2px" title="${{ '{:,.0f}'.format(total) }}"></div>
+      {% endif %}
+      {% endfor %}
+    </div>
+    <div class="flex gap-12" style="margin-top:6px;font-size:10px;color:var(--text-dim)">
+      <span style="color:var(--green)">■ Current</span>
+      <span style="color:var(--yellow)">■ 1–30d</span>
+      <span style="color:#e67e22">■ 31–60d</span>
+      <span style="color:var(--red)">■ 61–90d</span>
+      <span style="color:#7f0000">■ 90+d</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% macro inv_table(invoices, label, color) %}
+{% if invoices %}
+<div class="card" style="margin-bottom:12px">
+  <div class="card-header">
+    <span class="card-title" style="color:{{ color }}">{{ label }}</span>
+    <span class="text-dim" style="font-size:11px">${{ '{:,.2f}'.format(invoices|sum(attribute='balance_due')) }}</span>
+  </div>
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th>Invoice #</th>
+          <th>Client</th>
+          <th>Job</th>
+          <th style="text-align:right">Amount</th>
+          <th style="text-align:right">Paid</th>
+          <th style="text-align:right">Balance</th>
+          <th style="text-align:right">Due Date</th>
+          <th style="text-align:right">Days Over</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inv in invoices %}
+        <tr>
+          <td class="mono" style="font-size:11px"><a href="/invoices/{{ inv.id }}">#{{ inv.invoice_number }}</a></td>
+          <td style="font-size:12px">{{ inv.client_name or '—' }}</td>
+          <td>{% if inv.job_code %}<span class="badge badge-blue" style="font-size:9px">{{ inv.job_code }}</span>{% else %}—{% endif %}</td>
+          <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(inv.amount|float) }}</td>
+          <td style="text-align:right" class="mono text-dim">${{ '{:,.2f}'.format(inv.amount_paid|float) }}</td>
+          <td style="text-align:right;font-weight:700" class="mono" style="color:{{ color }}">${{ '{:,.2f}'.format(inv.balance_due|float) }}</td>
+          <td style="text-align:right" class="mono text-dim">{{ inv.due_date or '—' }}</td>
+          <td style="text-align:right;font-weight:600" style="color:{{ color }}">
+            {% if inv.days_overdue %}{{ inv.days_overdue }}d{% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endmacro %}
+
+{{ inv_table(current,    '✅ Current (Not Yet Due)',      'var(--green)') }}
+{{ inv_table(bucket_30,  '⚠️ 1–30 Days Overdue',         'var(--yellow)') }}
+{{ inv_table(bucket_60,  '🔶 31–60 Days Overdue',         '#e67e22') }}
+{{ inv_table(bucket_90,  '🔴 61–90 Days Overdue',         'var(--red)') }}
+{{ inv_table(bucket_90p, '🚨 90+ Days Overdue',           '#c0392b') }}
+
+{% if not (current or bucket_30 or bucket_60 or bucket_90 or bucket_90p) %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:40px">
+    <div style="font-size:32px;margin-bottom:8px">✅</div>
+    <div style="font-weight:600">No outstanding invoices!</div>
+    <div class="text-dim">All invoices have been paid.</div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

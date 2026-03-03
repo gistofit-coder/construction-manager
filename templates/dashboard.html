@@ -1,0 +1,253 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}Dashboard{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a>{% endblock %}
+
+{% block content %}
+<!-- KPIs -->
+<div class="kpi-grid">
+  <div class="kpi-tile green">
+    <div class="kpi-label">YTD Revenue</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(ytd_revenue) }}</div>
+    <div class="kpi-sub">Invoice totals this year</div>
+  </div>
+  <div class="kpi-tile red">
+    <div class="kpi-label">YTD Expenses</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(ytd_expenses) }}</div>
+    <div class="kpi-sub">Ledger debits this year</div>
+  </div>
+  <div class="kpi-tile {% if net_income >= 0 %}green{% else %}red{% endif %}">
+    <div class="kpi-label">Net Income</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(net_income) }}</div>
+    <div class="kpi-sub">Revenue − Expenses</div>
+  </div>
+  <div class="kpi-tile accent">
+    <div class="kpi-label">Outstanding</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(outstanding_sum) }}</div>
+    <div class="kpi-sub">{{ outstanding_count }} invoice{{ 's' if outstanding_count != 1 else '' }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Active Jobs</div>
+    <div class="kpi-value">{{ active_jobs }}</div>
+    <div class="kpi-sub">In progress</div>
+  </div>
+  {% if unmatched > 0 %}
+  <div class="kpi-tile red">
+    <div class="kpi-label">Unmatched Txns</div>
+    <div class="kpi-value">{{ unmatched }}</div>
+    <div class="kpi-sub"><a href="/reconciliation" style="color:var(--red)">Review now →</a></div>
+  </div>
+  {% endif %}
+  {% if unverified_receipts > 0 %}
+  <div class="kpi-tile yellow">
+    <div class="kpi-label">Unverified Receipts</div>
+    <div class="kpi-value">{{ unverified_receipts }}</div>
+    <div class="kpi-sub"><a href="/ledger?filter=unverified" style="color:var(--yellow)">Review →</a></div>
+  </div>
+  {% endif %}
+</div>
+
+<div class="grid-2">
+  <!-- Tax Deadlines -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🗓 Upcoming Tax Deadlines</span>
+      <div class="card-actions">
+        <a href="/tax" class="btn btn-outline btn-xs">View All</a>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      {% if reminders %}
+        <table>
+          <thead><tr><th>Due</th><th>Task</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for r in reminders %}
+            <tr>
+              <td class="mono" style="color:var(--{{ r.display.color }})">{{ r.due_date }}</td>
+              <td class="wrap">{{ r.task_description }}</td>
+              <td>
+                <span class="badge badge-{{ 'red' if r.display.color == 'red' else 'orange' if r.display.color == 'orange' else 'gray' }}">
+                  {{ r.display.label }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state"><p>No upcoming deadlines.</p></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Expiring Certs -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">📜 Expiring Certificates</span>
+      <div class="card-actions">
+        <a href="/certs" class="btn btn-outline btn-xs">View All</a>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      {% if expiring %}
+        <table>
+          <thead><tr><th>Company</th><th>Expires</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for c in expiring %}
+            <tr>
+              <td>{{ c.company_name }}</td>
+              <td class="mono">{{ c.end_date }}</td>
+              <td>
+                <span class="badge badge-{{ c.cert_status.color }}">
+                  {{ c.cert_status.status }}
+                </span>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div class="empty-state"><p class="text-green">✓ All certificates current.</p></div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ── Alert banners ────────────────────────────────────────── -->
+{% if duplicate_groups > 0 %}
+<div class="alert alert-warning" style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
+  <span style="font-size:18px">⚠️</span>
+  <div>
+    <strong>{{ duplicate_groups }} duplicate group{{ 's' if duplicate_groups != 1 }}</strong> detected in your ledger.
+    <a href="/ledger/duplicates" style="margin-left:8px" class="btn btn-warning btn-xs">Review Duplicates →</a>
+  </div>
+</div>
+{% endif %}
+{% if unverified_receipts > 0 %}
+<div class="alert" style="background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);margin-bottom:12px;display:flex;align-items:center;gap:12px">
+  <span style="font-size:18px">📎</span>
+  <div>
+    <strong>{{ unverified_receipts }} receipt{{ 's' if unverified_receipts != 1 }}</strong> linked but file not found on disk.
+    <a href="/ledger?receipt=unverified" style="margin-left:8px" class="btn btn-outline btn-xs">View →</a>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Active Jobs Health ──────────────────────────────────── -->
+{% if jobs_health %}
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header">
+    <span class="card-title">🏗️ Active Jobs ({{ jobs_health|length }})</span>
+    <a href="/jobs" class="btn btn-outline btn-xs">All Jobs →</a>
+  </div>
+  <div class="card-body no-pad">
+    <table>
+      <thead><tr style="font-size:11px;color:var(--text-dim)">
+        <th>Job</th><th>Client</th><th style="text-align:right">Contract</th>
+        <th style="text-align:right">Cost</th><th>Progress</th>
+        <th style="text-align:right">AR</th>
+      </tr></thead>
+      <tbody>
+      {% for j in jobs_health %}
+      {% set pct = (j.total_cost / j.contract_amount * 100) if j.contract_amount > 0 else none %}
+      {% set bpct = (j.total_cost / j.budget_amount * 100) if j.budget_amount > 0 else pct %}
+      <tr>
+        <td>
+          <a href="/jobs/{{ j.id }}" style="text-decoration:none">
+            <span class="badge badge-blue" style="font-size:11px">{{ j.job_code }}</span>
+          </a>
+        </td>
+        <td style="font-size:12px;color:var(--text-dim)">{{ j.client_name or '—' }}</td>
+        <td style="text-align:right;font-family:monospace;font-size:12px">
+          {{ '$' + '{:,.0f}'.format(j.contract_amount) if j.contract_amount else '—' }}
+        </td>
+        <td style="text-align:right;font-family:monospace;font-size:12px;
+            color:{% if bpct and bpct > 100 %}var(--red,#ef4444){% elif bpct and bpct > 85 %}var(--orange,#f59e0b){% else %}var(--text){% endif %}">
+          ${{ '{:,.0f}'.format(j.total_cost) }}
+        </td>
+        <td style="min-width:80px">
+          {% if pct is not none %}
+          <div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden;width:80px">
+            <div style="height:100%;border-radius:3px;width:{{ [pct,100]|min }}%;
+              background:{% if (bpct or pct) > 100 %}var(--red,#ef4444){% elif (bpct or pct) > 85 %}var(--orange,#f59e0b){% else %}var(--accent){% endif %}">
+            </div>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);margin-top:1px">{{ '{:.0f}'.format(pct) }}%</div>
+          {% else %}<span class="text-dim" style="font-size:11px">—</span>{% endif %}
+        </td>
+        <td style="text-align:right;font-family:monospace;font-size:12px">
+          {% if j.ar and j.ar > 0 %}
+            <span style="color:var(--orange,#f59e0b)">${{ '{:,.0f}'.format(j.ar) }}</span>
+          {% else %}<span class="text-dim">—</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Recent Ledger Entries -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">📒 Recent Ledger Entries</span>
+    <div class="card-actions">
+      <a href="/ledger" class="btn btn-outline btn-xs">View All</a>
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    {% if recent %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Job</th><th>Category</th>
+              <th>Description</th><th>Vendor</th>
+              <th style="text-align:right">Amount</th><th>Receipt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for e in recent %}
+            <tr>
+              <td class="mono">{{ e.entry_date }}</td>
+              <td><span class="badge badge-blue">{{ e.job_code or '—' }}</span></td>
+              <td class="dim">{{ e.category or '—' }}</td>
+              <td class="wrap" style="max-width:200px">{{ e.description or '—' }}</td>
+              <td>{{ e.vendor or '—' }}</td>
+              <td class="amount {% if e.amount < 0 %}text-red{% else %}text-green{% endif %}">
+                {{ '${:,.2f}'.format(e.amount) }}
+              </td>
+              <td>
+                {% if e.receipt_filename %}
+                  {% if e.receipt_verified %}
+                    <span data-tip="{{ e.receipt_filename }}">✅</span>
+                  {% else %}
+                    <span data-tip="File not found: {{ e.receipt_filename }}" style="color:var(--yellow)">⚠️</span>
+                  {% endif %}
+                {% else %}
+                  <span class="text-dim">—</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="icon">📒</div>
+        <p>No ledger entries yet. <a href="/ledger" class="text-accent">Add your first entry →</a></p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Setup Prompt (if fresh install) -->
+{% if not config.company_name %}
+<div class="alert alert-warning">
+  ⚙️ <strong>Get started:</strong> Configure your company information in
+  <a href="/settings" style="color:var(--yellow)">Settings</a> to personalize the app.
+</div>
+{% endif %}
+{% endblock %}

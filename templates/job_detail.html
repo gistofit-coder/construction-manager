@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+{% block title %}{{ job.job_code }} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}🏗️ {{ job.job_code }}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/jobs">Projects</a> / {{ job.job_code }}{% endblock %}
+
+{% block content %}
+<style>
+.kpi-row { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+.kpi-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 18px; min-width:130px; flex:1; }
+.kpi-card .kpi-n { font-size:22px; font-weight:700; line-height:1.1; }
+.kpi-card .kpi-l { font-size:11px; color:var(--text-dim); margin-top:2px; }
+.section-title { font-size:13px; font-weight:700; margin:18px 0 10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; }
+.cat-bar-wrap { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.cat-bar-wrap:last-child { border-bottom:none; }
+.cat-bar { height:6px; border-radius:3px; background:var(--accent); flex-shrink:0; }
+.milestone-row { display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.milestone-row:last-child { border-bottom:none; }
+.ms-status { width:16px; height:16px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:10px; cursor:pointer; }
+.ms-pending   { background:var(--border); }
+.ms-complete  { background:var(--green,#22c55e); color:#fff; }
+.ms-skipped   { background:var(--text-dim); color:#fff; opacity:.6; }
+.profit-meter { height:10px; border-radius:5px; background:var(--border); overflow:hidden; margin-top:6px; }
+.profit-fill  { height:100%; border-radius:5px; transition:width .4s; }
+</style>
+
+<!-- Header -->
+<div class="section-header">
+  <div>
+    <h2 style="margin:0">{{ job.job_code }}
+      <span class="badge badge-{% if job.status=='Active' %}green{% elif job.status=='Bidding' %}blue{% elif job.status=='Cancelled' %}red{% else %}gray{% endif %}" style="font-size:12px;margin-left:6px">{{ job.status }}</span>
+    </h2>
+    <div style="font-size:13px;color:var(--text-dim);margin-top:2px">
+      {{ job.description or '' }}
+      {% if job.client_name %} · <a href="/clients/{{ job.client_id }}">{{ job.client_name }}</a>{% endif %}
+      {% if job.start_date %} · {{ job.start_date }}{% if job.end_date %} → {{ job.end_date }}{% endif %}{% endif %}
+    </div>
+  </div>
+  <div class="actions">
+    <a href="/ledger?q={{ job.job_code }}" class="btn btn-outline btn-sm">📒 Ledger</a>
+    <a href="/jobs/{{ job.id }}/edit" class="btn btn-outline btn-sm">✏️ Edit</a>
+    <a href="/jobs/{{ job.id }}/export-csv" class="btn btn-outline btn-sm">⬇ CSV</a>
+    <a href="/jobs/{{ job.id }}/export-pdf" class="btn btn-outline btn-sm" target="_blank">📄 PDF</a>
+  </div>
+</div>
+
+<!-- KPI row -->
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-n text-accent">${{ '{:,.0f}'.format(contract_amt) if contract_amt else '—' }}</div>
+    <div class="kpi-l">Contract Amount</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-n" style="color:var(--red,#ef4444)">${{ '{:,.0f}'.format(total_cost) }}</div>
+    <div class="kpi-l">Total Cost</div>
+    {% if contract_amt and contract_amt > 0 %}
+    {% set cpct = (total_cost / contract_amt * 100) %}
+    <div class="profit-meter"><div class="profit-fill"
+      style="width:{{ [cpct,100]|min }}%;background:{% if cpct>90 %}var(--red,#ef4444){% elif cpct>75 %}var(--orange,#f59e0b){% else %}var(--accent){% endif %}">
+    </div></div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:2px">{{ '{:.0f}'.format(cpct) }}% of contract</div>
+    {% endif %}
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-n" style="color:{% if gross_profit >= 0 %}var(--green,#22c55e){% else %}var(--red,#ef4444){% endif %}">
+      {% if gross_profit >= 0 %}+{% endif %}${{ '{:,.0f}'.format(gross_profit|abs) }}
+    </div>
+    <div class="kpi-l">Gross Profit{% if margin_pct is not none %} ({{ '{:.1f}'.format(margin_pct) }}%){% endif %}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-n">${{ '{:,.0f}'.format(total_invoiced) }}</div>
+    <div class="kpi-l">Total Invoiced</div>
+  </div>
+  {% if ar_outstanding > 0 %}
+  <div class="kpi-card">
+    <div class="kpi-n" style="color:var(--orange,#f59e0b)">${{ '{:,.0f}'.format(ar_outstanding) }}</div>
+    <div class="kpi-l">AR Outstanding</div>
+  </div>
+  {% endif %}
+  {% if budget_amt > 0 %}
+  <div class="kpi-card">
+    <div class="kpi-n">${{ '{:,.0f}'.format(budget_amt) }}</div>
+    <div class="kpi-l">Budget{% if budget_used_pct %} ({{ '{:.0f}'.format(budget_used_pct) }}% used){% endif %}</div>
+    {% if budget_used_pct %}
+    <div class="profit-meter"><div class="profit-fill"
+      style="width:{{ [budget_used_pct,100]|min }}%;background:{% if budget_used_pct>100 %}var(--red,#ef4444){% elif budget_used_pct>85 %}var(--orange,#f59e0b){% else %}var(--green,#22c55e){% endif %}">
+    </div></div>
+    {% endif %}
+  </div>
+  {% endif %}
+  <div class="kpi-card">
+    <div class="kpi-n">{{ '{:.1f}'.format(total_hours) }}h</div>
+    <div class="kpi-l">Total Labor Hours</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+
+  <!-- Left: Cost by Category -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">💰 Cost by Category</span></div>
+    <div class="card-body">
+      {% if expenses %}
+      {% set max_cost = expenses[0].total %}
+      {% for e in expenses %}
+      <div class="cat-bar-wrap">
+        <div style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ e.category or 'Uncategorized' }}">
+          {{ e.category or 'Uncategorized' }}
+          <span style="color:var(--text-dim);font-size:10px"> ({{ e.entry_count }})</span>
+        </div>
+        <div class="cat-bar" style="width:{{ (e.total / max_cost * 100)|int }}px;max-width:80px"></div>
+        <div style="font-family:monospace;min-width:70px;text-align:right">${{ '{:,.0f}'.format(e.total) }}</div>
+      </div>
+      {% endfor %}
+      <div style="padding-top:8px;text-align:right;font-size:12px;font-weight:600;color:var(--text-dim)">
+        Total: ${{ '{:,.0f}'.format(total_cost) }}
+      </div>
+      {% else %}
+      <div class="text-dim" style="text-align:center;padding:20px">No expenses yet</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Right: Milestones -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🎯 Milestones</span>
+      <button class="btn btn-outline btn-xs" onclick="addMilestone()">+ Add</button>
+    </div>
+    <div class="card-body" id="milestones-body">
+      {% if milestones %}
+      {% for m in milestones %}
+      <div class="milestone-row" id="ms-{{ m.id }}">
+        <div class="ms-status ms-{{ m.status|lower }}"
+             onclick="cycleMilestone({{ m.id }}, '{{ m.status }}')"
+             title="Click to cycle status">
+          {% if m.status == 'Complete' %}✓{% elif m.status == 'Skipped' %}—{% else %}&nbsp;{% endif %}
+        </div>
+        <div style="flex:1">
+          <div style="{% if m.status == 'Complete' %}text-decoration:line-through;opacity:.6{% elif m.status == 'Skipped' %}opacity:.4{% endif %}">
+            {{ m.title }}
+          </div>
+          {% if m.due_date %}
+          <div style="font-size:10px;color:var(--text-dim)">Due {{ m.due_date }}
+            {% if m.status == 'Complete' and m.completed_date %} · Done {{ m.completed_date }}{% endif %}
+          </div>
+          {% endif %}
+          {% if m.notes %}<div style="font-size:10px;color:var(--text-dim)">{{ m.notes }}</div>{% endif %}
+        </div>
+        <button class="btn btn-outline btn-xs" style="opacity:.4" onclick="deleteMilestone({{ m.id }})">✕</button>
+      </div>
+      {% endfor %}
+      {% else %}
+      <div class="text-dim" style="text-align:center;padding:20px" id="ms-empty">
+        No milestones. <button class="btn btn-outline btn-xs" onclick="addMilestone()">Add one →</button>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<!-- Invoices -->
+{% if invoices %}
+<div class="section-title">🧾 Invoices</div>
+<div class="card">
+  <div class="card-body no-pad">
+    <table>
+      <thead><tr>
+        <th>Invoice #</th><th>Date</th><th>Due</th>
+        <th style="text-align:right">Amount</th><th style="text-align:right">Paid</th>
+        <th style="text-align:right">Balance</th><th>Status</th>
+      </tr></thead>
+      <tbody>
+        {% for i in invoices %}
+        <tr>
+          <td><a href="/invoices/{{ i.id }}">{{ i.invoice_number }}</a></td>
+          <td class="mono dim">{{ i.invoice_date }}</td>
+          <td class="mono dim">{{ i.due_date }}</td>
+          <td class="amount">${{ '{:,.2f}'.format(i.amount) }}</td>
+          <td class="amount">${{ '{:,.2f}'.format(i.amount_paid or 0) }}</td>
+          <td class="amount" style="color:{% if i.balance_due > 0 %}var(--orange,#f59e0b){% else %}var(--green,#22c55e){% endif %}">
+            ${{ '{:,.2f}'.format(i.balance_due or 0) }}
+          </td>
+          <td><span class="badge badge-{% if i.status=='Paid' %}green{% elif i.status in ('Overdue','Partial') %}orange{% else %}gray{% endif %}">{{ i.status }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Labor breakdown -->
+{% if timesheet %}
+<div class="section-title">👷 Labor by Employee</div>
+<div class="card">
+  <div class="card-body no-pad">
+    <table>
+      <thead><tr><th>Employee</th><th style="text-align:right">Hours</th><th style="text-align:right">Cost</th></tr></thead>
+      <tbody>
+        {% for t in timesheet %}
+        <tr>
+          <td>{{ t.full_name or 'Unknown' }}</td>
+          <td class="amount">{{ '{:.1f}'.format(t.hours or 0) }}h</td>
+          <td class="amount">${{ '{:,.2f}'.format(t.cost or 0) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Recent ledger entries -->
+<div class="section-title">📒 Recent Ledger Entries</div>
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Last {{ ledger_entries|length }} entries</span>
+    <a href="/ledger?q={{ job.job_code }}" class="btn btn-outline btn-xs">View all</a>
+  </div>
+  <div class="card-body no-pad">
+    {% if ledger_entries %}
+    <table>
+      <thead><tr>
+        <th>Date</th><th>Vendor</th><th>Description</th><th>Category</th>
+        <th style="text-align:right">Amount</th><th style="text-align:center">Rcpt</th>
+      </tr></thead>
+      <tbody>
+        {% for e in ledger_entries %}
+        <tr>
+          <td class="mono dim">{{ e.entry_date }}</td>
+          <td style="font-size:12px">{{ e.vendor or '—' }}</td>
+          <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e.description or '—' }}</td>
+          <td style="font-size:11px;color:var(--text-dim)">{{ e.category or '—' }}</td>
+          <td class="amount" style="color:{% if e.amount >= 0 %}var(--green,#22c55e){% else %}var(--red,#ef4444){% endif %}">
+            {% if e.amount >= 0 %}+{% endif %}${{ '{:,.2f}'.format(e.amount|abs) }}
+          </td>
+          <td style="text-align:center">{{ '✅' if e.receipt_verified else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state"><p>No ledger entries for this job yet.</p></div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Add Milestone Modal -->
+<div class="modal-overlay" id="modal-add-milestone">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>🎯 Add Milestone</h3>
+      <button class="modal-close" onclick="closeModal('modal-add-milestone')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Title *</label>
+        <input type="text" id="ms-title" placeholder="e.g. Foundation pour complete">
+      </div>
+      <div class="form-group">
+        <label>Due Date</label>
+        <input type="date" id="ms-due">
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <input type="text" id="ms-notes" placeholder="Optional notes">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="submitMilestone()">Save</button>
+        <button class="btn btn-outline" onclick="closeModal('modal-add-milestone')">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const JOB_ID = {{ job.id }};
+
+function addMilestone() {
+  document.getElementById('ms-title').value = '';
+  document.getElementById('ms-due').value   = '';
+  document.getElementById('ms-notes').value = '';
+  openModal('modal-add-milestone');
+  document.getElementById('ms-title').focus();
+}
+
+async function submitMilestone() {
+  const title = document.getElementById('ms-title').value.trim();
+  if (!title) { showToast('Title required', 'error'); return; }
+  const r = await fetch(`/api/jobs/${JOB_ID}/milestones`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      title,
+      due_date: document.getElementById('ms-due').value,
+      notes:    document.getElementById('ms-notes').value.trim(),
+    })
+  });
+  const d = await r.json();
+  if (d.success) {
+    closeModal('modal-add-milestone');
+    showToast('Milestone added', 'success');
+    // Inject new row into DOM
+    const m = d.milestone;
+    const empty = document.getElementById('ms-empty');
+    if (empty) empty.remove();
+    const body = document.getElementById('milestones-body');
+    const div = document.createElement('div');
+    div.className = 'milestone-row'; div.id = 'ms-' + m.id;
+    div.innerHTML = `
+      <div class="ms-status ms-pending" onclick="cycleMilestone(${m.id},'Pending')" title="Click to cycle">&nbsp;</div>
+      <div style="flex:1">
+        <div>${esc(m.title)}</div>
+        ${m.due_date ? `<div style="font-size:10px;color:var(--text-dim)">Due ${m.due_date}</div>` : ''}
+      </div>
+      <button class="btn btn-outline btn-xs" style="opacity:.4" onclick="deleteMilestone(${m.id})">✕</button>`;
+    body.appendChild(div);
+  } else {
+    showToast(d.error || 'Failed', 'error');
+  }
+}
+
+const STATUS_CYCLE = {Pending:'Complete', Complete:'Skipped', Skipped:'Pending'};
+const STATUS_ICONS = {Pending:'&nbsp;', Complete:'✓', Skipped:'—'};
+const STATUS_CLASSES = {Pending:'ms-pending', Complete:'ms-complete', Skipped:'ms-skipped'};
+
+async function cycleMilestone(id, currentStatus) {
+  const next = STATUS_CYCLE[currentStatus] || 'Pending';
+  const today = new Date().toISOString().slice(0,10);
+  const body  = {status: next};
+  if (next === 'Complete') body.completed_date = today;
+
+  const r = await fetch(`/api/milestones/${id}`, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  if (d.success) {
+    const row = document.getElementById('ms-' + id);
+    if (row) {
+      const dot = row.querySelector('.ms-status');
+      dot.className = 'ms-status ' + STATUS_CLASSES[next];
+      dot.innerHTML = STATUS_ICONS[next];
+      dot.setAttribute('onclick', `cycleMilestone(${id},'${next}')`);
+      const titleDiv = row.querySelector('div[style*="flex:1"] > div');
+      if (titleDiv) {
+        titleDiv.style.textDecoration = next === 'Complete' ? 'line-through' : '';
+        titleDiv.style.opacity = next === 'Skipped' ? '.4' : next === 'Complete' ? '.6' : '1';
+      }
+    }
+    showToast(`→ ${next}`, 'info');
+  } else showToast(d.error || 'Failed', 'error');
+}
+
+async function deleteMilestone(id) {
+  if (!confirm('Delete this milestone?')) return;
+  const r = await fetch(`/api/milestones/${id}`, {method:'DELETE'});
+  const d = await r.json();
+  if (d.success) {
+    document.getElementById('ms-' + id)?.remove();
+    showToast('Deleted', 'success');
+  } else showToast(d.error || 'Failed', 'error');
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Close status dropdowns when clicking elsewhere
+document.addEventListener('click', e => {
+  if (!e.target.closest('.dropdown')) {
+    document.querySelectorAll('.dropdown div').forEach(d => d.style.display='none');
+  }
+});
+</script>
+{% endblock %}

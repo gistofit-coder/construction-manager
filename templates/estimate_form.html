@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+{% block title %}{% if estimate %}Edit {{ estimate.estimate_number }}{% else %}New Estimate{% endif %} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📋 {% if estimate %}Edit Estimate{% else %}New Estimate{% endif %}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/estimates">Estimates</a> / {% if estimate %}Edit{% else %}New{% endif %}{% endblock %}
+
+{% block content %}
+<datalist id="cat-list">
+  {% for cat in (categories or []) %}
+  <option value="{{ cat.category_name if cat is mapping else cat }}">
+  {% endfor %}
+</datalist>
+<form method="POST" id="est-form"
+      action="{% if estimate %}/estimates/{{ estimate.id }}/edit{% else %}/estimates/new{% endif %}">
+<div style="display:grid;grid-template-columns:1fr 280px;gap:16px;align-items:start">
+
+  <!-- ── Left: Main Form ── -->
+  <div>
+    <!-- Header Card -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">Estimate Header</span></div>
+      <div class="card-body">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Job</label>
+            <select name="job_id" id="job-select" onchange="jobChanged()">
+              <option value="">— No Job —</option>
+              {% for j in jobs %}
+              <option value="{{ j.id }}"
+                {% if (estimate and estimate.job_id == j.id) or prefill_job_id == j.id|string %}selected{% endif %}>
+                {{ j.job_code }}{% if j.description %} — {{ j.description[:40] }}{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Client</label>
+            <select name="client_id">
+              <option value="">— No Client —</option>
+              {% for c in clients %}
+              <option value="{{ c.id }}"
+                {% if (estimate and estimate.client_id == c.id) or prefill_client_id == c.id|string %}selected{% endif %}>
+                {{ c.full_name }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Estimate Date</label>
+            <input type="date" name="estimate_date"
+                   value="{{ estimate.estimate_date if estimate else today }}">
+          </div>
+          <div class="form-group">
+            <label>Status</label>
+            <select name="status">
+              {% for s in ['Draft','Sent','Accepted','Rejected','Revised'] %}
+              <option value="{{ s }}" {% if estimate and estimate.status == s %}selected{% elif not estimate and s == 'Draft' %}selected{% endif %}>{{ s }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group full">
+            <label>Notes</label>
+            <textarea name="notes" rows="2" placeholder="Scope, exclusions, assumptions…">{{ estimate.notes if estimate else '' }}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Overhead / Burden Rates Card -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header">
+        <span class="card-title">Overhead & Profit Rates</span>
+        <span class="text-dim" style="font-size:11px">Applied to total direct costs</span>
+      </div>
+      <div class="card-body">
+        <div class="form-grid" style="grid-template-columns:repeat(4,1fr)">
+          {% for fname, label, default in [
+            ('overhead_pct',    'Overhead %',    estimate.overhead_pct if estimate else config.get('default_overhead_pct', 15)|float),
+            ('insurance_pct',   'Insurance %',   estimate.insurance_pct if estimate else config.get('default_insurance_pct', 5)|float),
+            ('owner_wages_pct', 'Owner Wages %', estimate.owner_wages_pct if estimate else config.get('default_owner_wages_pct', 10)|float),
+            ('profit_pct',      'Profit %',      estimate.profit_pct if estimate else config.get('default_profit_pct', 10)|float),
+          ] %}
+          <div class="form-group" style="margin:0">
+            <label style="font-size:11px">{{ label }}</label>
+            <input type="number" name="{{ fname }}" step="0.1" min="0" max="100"
+                   value="{{ '%.1f'|format(default|float) }}"
+                   oninput="updateTotals()" style="font-size:13px">
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Line Items Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Line Items</span>
+        <button type="button" class="btn btn-primary btn-sm" onclick="addRow()">+ Add Line</button>
+      </div>
+      <div class="card-body no-pad">
+        <div style="overflow-x:auto">
+          <table id="li-table" style="min-width:800px">
+            <thead>
+              <tr>
+                <th style="width:130px">Category <span class="req">*</span></th>
+                <th style="min-width:180px">Description / Notes</th>
+                <th style="width:70px;text-align:right">Labor Hrs</th>
+                <th style="width:80px;text-align:right">Labor Rate</th>
+                <th style="width:90px;text-align:right">Labor $</th>
+                <th style="width:110px;text-align:right">Materials<br><span style="font-size:9px;font-weight:400;color:var(--text-dim)">=formula ok</span></th>
+                <th style="width:90px;text-align:right">Subs</th>
+                <th style="width:80px;text-align:right">Other</th>
+                <th style="width:80px;text-align:right">Total</th>
+                <th style="width:70px;text-align:right">Markup %</th>
+                <th style="width:90px;text-align:right">Sell $</th>
+                <th style="width:36px"></th>
+              </tr>
+            </thead>
+            <tbody id="li-tbody">
+              {% if line_items %}
+                {% for li in line_items %}
+                <tr class="li-row">
+                  <td>
+                    <input type="text" name="li_category[]" value="{{ li.category }}"
+                           style="width:100%" list="cat-list" oninput="updateTotals()">
+                  </td>
+                  <td><input type="text" name="li_description[]" value="{{ li.notes or '' }}" style="width:100%" placeholder="Description…"></td>
+                  <td><input type="number" name="li_labor_hours[]" value="{{ '%.2f'|format(li.labor_hours_estimated|float) }}" step="0.25" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_labor_rate[]"  value="{{ '%.2f'|format(li.labor_rate|float) }}"            step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_labor_cost[]"  value="{{ '%.2f'|format(li.labor_cost|float) }}"            step="0.01" style="width:100%;text-align:right;background:var(--bg)" readonly></td>
+                  <td><input type="text"   name="li_materials[]"   value="{{ li.materials_cost if li.materials_cost else '' }}" style="width:100%;text-align:right" placeholder="0 or =50*90" oninput="evalFormula(this);calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_subs[]"        value="{{ '%.2f'|format(li.subcontractor_cost|float) }}"   step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_other[]"       value="{{ '%.2f'|format(li.other_cost|float) }}"           step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_total[]"       value="{{ '%.2f'|format(li.total_cost|float) }}"           step="0.01" style="width:100%;text-align:right;background:var(--bg);font-weight:600" readonly></td>
+                  <td><input type="number" name="li_markup[]"      value="{{ '%.1f'|format(li.markup_pct|float) }}"           step="0.1"  style="width:100%;text-align:right" oninput="calcSell(this);updateTotals()"></td>
+                  <td><input type="number" name="li_sell_price[]"  value="{{ '%.2f'|format(li.sell_price|float) }}"           step="0.01" style="width:100%;text-align:right;font-weight:600" oninput="updateTotals()"></td>
+                  <td><button type="button" class="btn btn-xs btn-danger" onclick="removeRow(this)">×</button></td>
+                </tr>
+                {% endfor %}
+              {% else %}
+                {# Default starter rows #}
+                {% for cat in ['Preliminary','Demolition','Disposal','Plumbing','Electrical','Framing-Labor','Drywall','Flooring-Tile','Cabinetry','Counter-tops','Millwork','Plumbing-Trim','Hardware','Glass and Mirror','Electrical-Trim','Painting','Miscellaneous'] %}
+                <tr class="li-row">
+                  <td><input type="text"   name="li_category[]"     value="{{ cat }}"  style="width:100%" list="cat-list" oninput="updateTotals()"></td>
+                  <td><input type="text"   name="li_description[]"  value=""           style="width:100%" placeholder="Description…"></td>
+                  <td><input type="number" name="li_labor_hours[]"  value=""           step="0.25" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_labor_rate[]"   value=""           step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_labor_cost[]"   value="0"          step="0.01" style="width:100%;text-align:right;background:var(--bg)" readonly></td>
+                  <td><input type="text"   name="li_materials[]"    value=""           style="width:100%;text-align:right" placeholder="0 or =50*90" oninput="evalFormula(this);calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_subs[]"         value=""           step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_other[]"        value=""           step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+                  <td><input type="number" name="li_total[]"        value="0"          step="0.01" style="width:100%;text-align:right;background:var(--bg);font-weight:600" readonly></td>
+                  <td><input type="number" name="li_markup[]"       value=""           step="0.1"  style="width:100%;text-align:right" oninput="calcSell(this);updateTotals()"></td>
+                  <td><input type="number" name="li_sell_price[]"   value="0"          step="0.01" style="width:100%;text-align:right;font-weight:600" oninput="updateTotals()"></td>
+                  <td><button type="button" class="btn btn-xs btn-danger" onclick="removeRow(this)">×</button></td>
+                </tr>
+                {% endfor %}
+              {% endif %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex gap-8" style="margin-top:14px">
+      <button type="submit" id="save-btn" class="btn btn-primary">💾 Save Estimate</button>
+      <a href="/estimates{% if estimate %}/{{ estimate.id }}{% endif %}" class="btn btn-outline">Cancel</a>
+    </div>
+  </div>
+
+  <!-- ── Right: Live Totals Sidebar ── -->
+  <div style="position:sticky;top:16px">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Live Totals</span></div>
+      <div class="card-body" style="font-size:12px">
+        {% for label, key, cls in [
+          ('Labor',          'total_labor',       ''),
+          ('Materials',      'total_materials',   ''),
+          ('Subcontractors', 'total_subs',        ''),
+          ('Other',          'total_other',       ''),
+        ] %}
+        <div class="flex" style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+          <span class="text-dim">{{ label }}</span>
+          <span class="mono" id="tot-{{ key }}">$0.00</span>
+        </div>
+        {% endfor %}
+        <div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:2px solid var(--border);font-weight:700">
+          <span>Direct Costs</span>
+          <span class="mono" id="tot-total_direct">$0.00</span>
+        </div>
+        <div class="flex" style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+          <span class="text-dim">+ Overhead</span>
+          <span class="mono" id="tot-overhead_amt">$0.00</span>
+        </div>
+        <div class="flex" style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+          <span class="text-dim">+ Insurance</span>
+          <span class="mono" id="tot-insurance_amt">$0.00</span>
+        </div>
+        <div class="flex" style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+          <span class="text-dim">+ Owner Wages</span>
+          <span class="mono" id="tot-owner_wages_amt">$0.00</span>
+        </div>
+        <div class="flex" style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border)">
+          <span class="text-dim">+ Profit</span>
+          <span class="mono" id="tot-profit_amt">$0.00</span>
+        </div>
+        <div class="flex" style="justify-content:space-between;padding:10px 0 4px;font-weight:800;font-size:15px">
+          <span>TOTAL ESTIMATE</span>
+          <span class="mono text-green" id="tot-total_estimate">$0.00</span>
+        </div>
+        <div class="flex" style="justify-content:space-between;padding:4px 0;border-top:1px solid var(--border)">
+          <span class="text-dim" style="font-size:10px">Sum of line sell prices</span>
+          <span class="mono" id="tot-total_sell_lines" style="font-size:11px">$0.00</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:10px">
+      <div class="card-header"><span class="card-title" style="font-size:11px">Quick Add Categories</span></div>
+      <div class="card-body" style="display:flex;flex-wrap:wrap;gap:4px">
+        {% for cat in ['Demolition','Framing','Electrical','Plumbing','HVAC','Drywall','Flooring','Painting','Roofing','Concrete','Excavation','Landscaping','Permits','Equipment','Cleanup'] %}
+        <button type="button" class="btn btn-xs btn-outline" style="font-size:10px"
+                onclick="addRowWith('{{ cat }}')">{{ cat }}</button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+</div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ROW_TEMPLATE = `
+<tr class="li-row">
+  <td><input type="text"   name="li_category[]"    value=""  style="width:100%" list="cat-list" oninput="updateTotals()"></td>
+  <td><input type="text"   name="li_description[]" value=""  style="width:100%" placeholder="Description…"></td>
+  <td><input type="number" name="li_labor_hours[]" value=""  step="0.25" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+  <td><input type="number" name="li_labor_rate[]"  value=""  step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+  <td><input type="number" name="li_labor_cost[]"  value="0" step="0.01" style="width:100%;text-align:right;background:var(--bg)" readonly></td>
+  <td><input type="text"   name="li_materials[]"   value=""  style="width:100%;text-align:right" placeholder="0 or =50*90" oninput="evalFormula(this);calcRow(this);updateTotals()"></td>
+  <td><input type="number" name="li_subs[]"        value=""  step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+  <td><input type="number" name="li_other[]"       value=""  step="0.01" style="width:100%;text-align:right" oninput="calcRow(this);updateTotals()"></td>
+  <td><input type="number" name="li_total[]"       value="0" step="0.01" style="width:100%;text-align:right;background:var(--bg);font-weight:600" readonly></td>
+  <td><input type="number" name="li_markup[]"      value=""  step="0.1"  style="width:100%;text-align:right" oninput="calcSell(this);updateTotals()"></td>
+  <td><input type="number" name="li_sell_price[]"  value="0" step="0.01" style="width:100%;text-align:right;font-weight:600" oninput="updateTotals()"></td>
+  <td><button type="button" class="btn btn-xs btn-danger" onclick="removeRow(this)">×</button></td>
+</tr>`;
+
+// Evaluate =formula in materials/labor fields
+function evalFormula(inp) {
+  const raw = inp.value.trim();
+  if (raw.startsWith('=')) {
+    try {
+      // Only allow safe math: digits, operators, spaces, parens, dots
+      const expr = raw.slice(1).replace(/[^0-9+\-*/().\s]/g, '');
+      const result = Function('"use strict"; return (' + expr + ')')();
+      if (!isNaN(result)) {
+        inp.dataset.formula = raw;    // store original formula
+        inp.dataset.computed = result.toFixed(2);
+        inp.style.color = 'var(--accent)';
+        inp.title = raw + ' = ' + result.toFixed(2);
+      }
+    } catch(e) { /* invalid formula */ }
+  } else {
+    delete inp.dataset.formula;
+    inp.style.color = '';
+    inp.title = '';
+  }
+}
+
+// Get numeric value from field (resolves formulas)
+function getFieldValue(inp) {
+  if (inp.dataset.formula && inp.dataset.computed) return parseFloat(inp.dataset.computed) || 0;
+  return parseFloat(inp.value) || 0;
+}
+
+function addRow() {
+  const tbody = document.getElementById('li-tbody');
+  tbody.insertAdjacentHTML('beforeend', ROW_TEMPLATE);
+  tbody.lastElementChild.querySelector('input').focus();
+}
+
+function addRowWith(category) {
+  addRow();
+  const rows = document.querySelectorAll('.li-row');
+  rows[rows.length - 1].querySelector('[name="li_category[]"]').value = category;
+}
+
+function removeRow(btn) {
+  btn.closest('tr').remove();
+  updateTotals();
+}
+
+function calcRow(inp) {
+  const row   = inp.closest('tr');
+  const hrs   = parseFloat(row.querySelector('[name="li_labor_hours[]"]').value) || 0;
+  const rate  = parseFloat(row.querySelector('[name="li_labor_rate[]"]').value)  || 0;
+  const labor = Math.round(hrs * rate * 100) / 100;
+  row.querySelector('[name="li_labor_cost[]"]').value = labor.toFixed(2);
+  calcTotal(row);
+}
+
+function calcTotal(row) {
+  const labor = parseFloat(row.querySelector('[name="li_labor_cost[]"]').value) || 0;
+  const matInp = row.querySelector('[name="li_materials[]"]'); const mat = getFieldValue(matInp);
+  const subs  = parseFloat(row.querySelector('[name="li_subs[]"]').value)        || 0;
+  const other = parseFloat(row.querySelector('[name="li_other[]"]').value)       || 0;
+  const total = Math.round((labor + mat + subs + other) * 100) / 100;
+  row.querySelector('[name="li_total[]"]').value = total.toFixed(2);
+
+  // Recalc sell price if markup set
+  const markup = parseFloat(row.querySelector('[name="li_markup[]"]').value) || 0;
+  if (markup) {
+    const sell = Math.round(total * (1 + markup / 100) * 100) / 100;
+    row.querySelector('[name="li_sell_price[]"]').value = sell.toFixed(2);
+  }
+}
+
+function calcSell(inp) {
+  const row    = inp.closest('tr');
+  const total  = parseFloat(row.querySelector('[name="li_total[]"]').value) || 0;
+  const markup = parseFloat(inp.value) || 0;
+  if (markup && total) {
+    const sell = Math.round(total * (1 + markup / 100) * 100) / 100;
+    row.querySelector('[name="li_sell_price[]"]').value = sell.toFixed(2);
+  }
+}
+
+let _totTimer = null;
+function updateTotals() {
+  clearTimeout(_totTimer);
+  _totTimer = setTimeout(async () => {
+    const items = [];
+    document.querySelectorAll('.li-row').forEach(row => {
+      items.push({
+        labor_cost:        parseFloat(row.querySelector('[name="li_labor_cost[]"]')?.value) || 0,
+        materials_cost:    parseFloat(row.querySelector('[name="li_materials[]"]')?.value)  || 0,
+        subcontractor_cost:parseFloat(row.querySelector('[name="li_subs[]"]')?.value)       || 0,
+        other_cost:        parseFloat(row.querySelector('[name="li_other[]"]')?.value)      || 0,
+        sell_price:        parseFloat(row.querySelector('[name="li_sell_price[]"]')?.value) || 0,
+      });
+    });
+
+    const pct = name => parseFloat(document.querySelector(`[name="${name}"]`)?.value) || 0;
+
+    const res  = await fetch('/api/estimates/preview-totals', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        overhead_pct:    pct('overhead_pct'),
+        insurance_pct:   pct('insurance_pct'),
+        owner_wages_pct: pct('owner_wages_pct'),
+        profit_pct:      pct('profit_pct'),
+        line_items:      items,
+      })
+    });
+    const data = await res.json();
+    for (const [k, v] of Object.entries(data)) {
+      const el = document.getElementById('tot-'+k);
+      if (el) el.textContent = '$' + (+v).toLocaleString('en-US', {minimumFractionDigits:2});
+    }
+  }, 200);
+}
+
+function jobChanged() {
+  // Could auto-fetch client — for now just triggers update
+  updateTotals();
+}
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+  // Calc all existing rows
+  document.querySelectorAll('.li-row').forEach(row => calcTotal(row));
+  updateTotals();
+});
+
+// Prevent Enter from submitting form (except on submit button or textarea)
+document.getElementById('est-form').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    const t = e.target;
+    // Allow Enter only in textareas and on the save button itself
+    if (t.tagName === 'TEXTAREA') return;
+    if (t.type === 'submit' || t.id === 'save-btn') return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Move focus to next input in same row
+    const inputs = Array.from(document.querySelectorAll('#est-form input, #est-form select, #est-form textarea'));
+    const idx = inputs.indexOf(t);
+    if (idx >= 0 && idx < inputs.length - 1) inputs[idx + 1].focus();
+  }
+});
+
+// Ctrl+S to save
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); document.getElementById('est-form').submit(); }
+});
+</script>
+{% endblock %}

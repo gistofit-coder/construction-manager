@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block title %}Import Wizard — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}Data Import Wizard{% endblock %}
+{% block breadcrumb %}
+  <a href="/">Home</a> / <a href="/settings">Settings</a> / Import Wizard
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">📥 Import from ODS / XLSX Workbook</span>
+  </div>
+  <div class="card-body">
+    <p class="text-dim" style="margin-bottom:16px;font-size:12px">
+      Upload your LibreOffice (.ODS) or Excel (.XLSX) workbook to migrate data into the app.
+      The wizard will auto-detect sheets, preview data, validate, and import.
+    </p>
+
+    <!-- Steps indicator -->
+    <div id="step-indicator" class="flex gap-8" style="margin-bottom:20px">
+      <div class="step active" id="step-1-ind">1. Upload</div>
+      <div style="color:var(--text-dim);align-self:center">→</div>
+      <div class="step" id="step-2-ind">2. Preview</div>
+      <div style="color:var(--text-dim);align-self:center">→</div>
+      <div class="step" id="step-3-ind">3. Validate</div>
+      <div style="color:var(--text-dim);align-self:center">→</div>
+      <div class="step" id="step-4-ind">4. Import</div>
+    </div>
+    <style>
+      .step {
+        padding: 4px 14px; border-radius: 20px;
+        font-size: 11px; font-weight: 600;
+        background: var(--bg); color: var(--text-dim);
+        border: 1px solid var(--border);
+      }
+      .step.active { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+      .step.done { background: var(--green-dim); color: var(--green); border-color: var(--green); }
+    </style>
+
+    <!-- Step 1: Upload -->
+    <div id="pane-step-1">
+      <div style="border:2px dashed var(--border);border-radius:8px;padding:40px;text-align:center"
+           id="drop-zone">
+        <div style="font-size:32px;margin-bottom:12px">📄</div>
+        <p class="text-bright" style="font-size:14px;margin-bottom:8px">Drop your workbook here</p>
+        <p class="text-dim" style="font-size:11px;margin-bottom:16px">Supports .ODS and .XLSX files</p>
+        <label class="btn btn-primary" style="cursor:pointer">
+          Choose File
+          <input type="file" id="upload-file" accept=".ods,.xlsx" style="display:none">
+        </label>
+      </div>
+      <div id="upload-progress" style="display:none;margin-top:16px">
+        <div class="flex-center gap-8 mb-12">
+          <span class="text-dim" id="upload-filename"></span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="upload-bar" style="width:0%"></div>
+        </div>
+        <p class="text-dim" style="margin-top:8px;font-size:11px" id="upload-status">Uploading...</p>
+      </div>
+    </div>
+
+    <!-- Step 2: Preview -->
+    <div id="pane-step-2" style="display:none">
+      <div id="batch-id-display" class="alert alert-info" style="margin-bottom:12px"></div>
+      <div id="preview-table-container"></div>
+      <div class="flex gap-8 mt-12">
+        <button class="btn btn-outline" onclick="goStep(1)">← Back</button>
+        <button class="btn btn-primary" onclick="validateImport()">Validate Data →</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Validate -->
+    <div id="pane-step-3" style="display:none">
+      <div id="validation-results"></div>
+      <div class="flex gap-8 mt-12">
+        <button class="btn btn-outline" onclick="goStep(2)">← Back</button>
+        <button class="btn btn-primary" id="btn-execute" onclick="executeImport()">
+          ✓ Import Data
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 4: Complete -->
+    <div id="pane-step-4" style="display:none">
+      <div class="alert alert-success" id="import-success-msg"></div>
+      <div id="import-summary-table"></div>
+      <div class="flex gap-8 mt-12">
+        <a href="/" class="btn btn-primary">← Go to Dashboard</a>
+        <button class="btn btn-outline" onclick="goStep(1)">Import Another File</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Import History -->
+{% if batches %}
+<div class="card">
+  <div class="card-header"><span class="card-title">📋 Import History</span></div>
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr><th>Date</th><th>File</th><th>Status</th><th>Summary</th></tr>
+      </thead>
+      <tbody>
+        {% for b in batches %}
+        <tr>
+          <td class="mono dim">{{ b.import_date[:16] }}</td>
+          <td>{{ b.source_filename }}</td>
+          <td>
+            <span class="badge badge-{% if b.status == 'Imported' %}green{% elif b.status == 'Failed' %}red{% else %}gray{% endif %}">
+              {{ b.status }}
+            </span>
+          </td>
+          <td class="dim wrap">
+            {% if b.summary %}
+              {% for sheet, result in (b.summary | tojson | tojson | replace('\"','') | replace('{','') | replace('}','')).split(',') %}{{ sheet }}{% endfor %}
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentBatchId = null;
+let currentStep = 1;
+
+function goStep(n) {
+  for(let i = 1; i <= 4; i++) {
+    document.getElementById(`pane-step-${i}`).style.display = i === n ? 'block' : 'none';
+    const ind = document.getElementById(`step-${i}-ind`);
+    ind.className = 'step ' + (i < n ? 'done' : i === n ? 'active' : '');
+  }
+  currentStep = n;
+}
+
+// File upload
+document.getElementById('upload-file').addEventListener('change', function() {
+  if(this.files.length === 0) return;
+  uploadFile(this.files[0]);
+});
+
+// Drag and drop
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.style.borderColor = 'var(--accent)'; });
+dz.addEventListener('dragleave', () => { dz.style.borderColor = 'var(--border)'; });
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.style.borderColor = 'var(--border)';
+  if(e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+});
+
+function uploadFile(file) {
+  const prog = document.getElementById('upload-progress');
+  prog.style.display = 'block';
+  document.getElementById('upload-filename').textContent = file.name;
+  document.getElementById('upload-status').textContent = 'Uploading...';
+  document.getElementById('upload-bar').style.width = '30%';
+
+  const fd = new FormData();
+  fd.append('file', file);
+
+  fetch('/settings/import/upload', {method:'POST', body: fd})
+    .then(r => r.json())
+    .then(data => {
+      if(data.error) {
+        showToast(data.error, 'error');
+        prog.style.display = 'none';
+        return;
+      }
+      document.getElementById('upload-bar').style.width = '100%';
+      document.getElementById('upload-status').textContent = '✓ Upload complete';
+      currentBatchId = data.batch_id;
+      showPreview(data.batch_id, data.preview);
+    })
+    .catch(e => {
+      showToast('Upload failed: ' + e.message, 'error');
+      prog.style.display = 'none';
+    });
+}
+
+function showPreview(batchId, preview) {
+  document.getElementById('batch-id-display').innerHTML =
+    `ℹ️ Import batch: <strong>${batchId}</strong> — ${Object.keys(preview).length} sheet(s) detected`;
+
+  let html = '';
+  for(const [sheet, info] of Object.entries(preview)) {
+    const targetLabel = info.target ? `→ ${info.target}` : '(not mapped)';
+    const targetColor = info.target ? 'badge-green' : 'badge-gray';
+    html += `<div class="card" style="margin-bottom:12px">
+      <div class="card-header">
+        <span class="card-title">Sheet: <strong>${sheet}</strong></span>
+        <span class="badge ${targetColor}" style="margin-left:8px">${targetLabel}</span>
+        <span class="text-dim" style="margin-left:8px;font-size:11px">${info.row_count} rows</span>
+      </div>`;
+    if(info.sample && info.sample.length > 0) {
+      const headers = Object.keys(info.sample[0]);
+      html += `<div class="card-body no-pad"><div class="table-wrap"><table>
+        <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>`;
+      for(const row of info.sample) {
+        html += `<tr>${headers.map(h => `<td class="dim">${row[h] !== null && row[h] !== undefined ? String(row[h]).slice(0,50) : ''}</td>`).join('')}</tr>`;
+      }
+      html += '</tbody></table></div></div>';
+    }
+    html += '</div>';
+  }
+  document.getElementById('preview-table-container').innerHTML = html;
+  goStep(2);
+}
+
+function validateImport() {
+  if(!currentBatchId) return;
+  document.getElementById('validation-results').innerHTML =
+    '<p class="text-dim">Validating...</p>';
+  goStep(3);
+
+  fetch('/settings/import/validate', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({batch_id: currentBatchId})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if(data.error) { showToast(data.error, 'error'); return; }
+    let html = '';
+    let totalErrors = 0;
+    for(const [sheet, totals] of Object.entries(data.totals)) {
+      totalErrors += totals.errors;
+      const color = totals.errors > 0 ? 'yellow' : 'green';
+      html += `<div class="alert alert-${totals.errors > 0 ? 'warning' : 'success'}" style="margin-bottom:8px">
+        <strong>${sheet}:</strong> ${totals.valid} valid rows, ${totals.errors} errors
+        (${totals.total} total)
+      </div>`;
+      if(data.errors[sheet] && data.errors[sheet].length > 0) {
+        html += `<div class="card" style="margin-bottom:12px"><div class="card-body">
+          <p class="text-yellow" style="margin-bottom:8px;font-size:11px;font-weight:600">VALIDATION ERRORS — These rows will be skipped:</p>
+          <table><thead><tr><th>Row</th><th>Errors</th><th>Data Preview</th></tr></thead><tbody>`;
+        for(const err of data.errors[sheet].slice(0,20)) {
+          html += `<tr>
+            <td class="mono">${err.row}</td>
+            <td class="text-red" style="font-size:11px">${err.errors.join(', ')}</td>
+            <td class="dim" style="font-size:11px;max-width:300px">${JSON.stringify(err.data).slice(0,100)}</td>
+          </tr>`;
+        }
+        html += '</tbody></table></div></div>';
+      }
+    }
+    if(totalErrors === 0) {
+      html = '<div class="alert alert-success">✓ All rows validated successfully!</div>' + html;
+    }
+    document.getElementById('validation-results').innerHTML = html;
+  });
+}
+
+function executeImport() {
+  if(!currentBatchId) return;
+  document.getElementById('btn-execute').disabled = true;
+  document.getElementById('btn-execute').textContent = '⏳ Importing...';
+
+  fetch('/settings/import/execute', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({batch_id: currentBatchId})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if(data.error) {
+      showToast('Import failed: ' + data.error, 'error');
+      document.getElementById('btn-execute').disabled = false;
+      document.getElementById('btn-execute').textContent = '✓ Import Data';
+      return;
+    }
+    let msg = '✓ Import complete! ';
+    let tableHtml = '<table><thead><tr><th>Sheet</th><th>Imported</th><th>Skipped</th></tr></thead><tbody>';
+    for(const [sheet, result] of Object.entries(data.summary)) {
+      msg += `${sheet}: ${result.imported} rows. `;
+      tableHtml += `<tr><td>${sheet}</td><td class="text-green">${result.imported}</td><td class="text-dim">${result.skipped}</td></tr>`;
+    }
+    tableHtml += '</tbody></table>';
+    document.getElementById('import-success-msg').textContent = msg;
+    document.getElementById('import-summary-table').innerHTML = tableHtml;
+    goStep(4);
+    showToast('Import successful!', 'success');
+  });
+}
+</script>
+{% endblock %}

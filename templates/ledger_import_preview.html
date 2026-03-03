@@ -1,0 +1,218 @@
+{% extends "base.html" %}
+{% block title %}Import Preview — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📥 Import Preview{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/ledger">Ledger</a> / Import Preview{% endblock %}
+
+{% block content %}
+<style>
+.imp-row { font-size: 12px; }
+.imp-row td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+.dup-exact   { background: rgba(239,68,68,.10); }
+.dup-near    { background: rgba(245,158,11,.10); }
+.dup-recurring { background: rgba(99,102,241,.08); }
+.dup-tag { padding:1px 6px; border-radius:8px; font-size:10px; font-weight:600; white-space:nowrap; }
+.dup-tag.exact     { background:#fee2e2; color:#b91c1c; }
+.dup-tag.near      { background:#fef3c7; color:#92400e; }
+.dup-tag.recurring { background:#ede9fe; color:#5b21b6; }
+.dup-tag.clean     { background:#dcfce7; color:#166534; }
+.stats-pills { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+.stat-pill   { padding:4px 12px; border-radius:16px; font-size:12px; font-weight:600; }
+</style>
+
+<div class="section-header">
+  <h2>Import Preview — {{ filename }}</h2>
+  <div class="actions">
+    <a href="/ledger" class="btn btn-outline">✕ Cancel</a>
+  </div>
+</div>
+
+{% set exact_count    = rows|selectattr('dup_status','equalto','exact')|list|length %}
+{% set near_count     = rows|selectattr('dup_status','equalto','near')|list|length %}
+{% set recurring_count= rows|selectattr('dup_status','equalto','recurring')|list|length %}
+{% set clean_count    = rows|selectattr('dup_status','equalto','')|list|length %}
+
+<!-- Summary pills -->
+<div class="stats-pills">
+  <span class="stat-pill" style="background:#dcfce7;color:#166534">✅ {{ clean_count }} Clean</span>
+  {% if exact_count %}
+  <span class="stat-pill" style="background:#fee2e2;color:#b91c1c">🔴 {{ exact_count }} Exact Duplicates</span>
+  {% endif %}
+  {% if near_count %}
+  <span class="stat-pill" style="background:#fef3c7;color:#92400e">🟡 {{ near_count }} Near Duplicates (±3 days)</span>
+  {% endif %}
+  {% if recurring_count %}
+  <span class="stat-pill" style="background:#ede9fe;color:#5b21b6">🔁 {{ recurring_count }} Recurring (will import)</span>
+  {% endif %}
+  {% if errors %}
+  <span class="stat-pill" style="background:#fee2e2;color:#b91c1c">⚠️ {{ errors|length }} Parse Errors</span>
+  {% endif %}
+</div>
+
+{% if errors %}
+<div class="alert alert-warning" style="margin-bottom:12px">
+  <strong>Parse errors (rows skipped):</strong>
+  <ul style="margin:6px 0 0 16px;font-size:12px">
+    {% for e in errors[:10] %}<li>{{ e }}</li>{% endfor %}
+    {% if errors|length > 10 %}<li>… and {{ errors|length - 10 }} more</li>{% endif %}
+  </ul>
+</div>
+{% endif %}
+
+{% if exact_count or near_count %}
+<div class="alert alert-warning" style="margin-bottom:12px;font-size:12px">
+  ⚠️ Highlighted rows appear to already exist in your ledger.
+  <strong>Exact duplicates are pre-checked for skipping.</strong>
+  Review near-duplicates and uncheck any you still want to import.
+</div>
+{% endif %}
+
+<!-- Bulk toggle bar -->
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+  <button class="btn btn-outline btn-sm" onclick="toggleAll(true)">☑ Select All</button>
+  <button class="btn btn-outline btn-sm" onclick="toggleAll(false)">☐ Deselect All</button>
+  <button class="btn btn-outline btn-sm" onclick="toggleDupStatus('exact',true)">Skip all exact dups</button>
+  <button class="btn btn-outline btn-sm" onclick="toggleDupStatus('near',true)">Skip all near dups</button>
+  <span id="count-label" style="font-size:12px;color:var(--text-dim);margin-left:8px"></span>
+</div>
+
+<form method="POST" action="/ledger/import" id="import-form">
+  <input type="hidden" name="confirmed" value="1">
+  <input type="hidden" name="import_token" value="{{ import_token }}">
+
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-body no-pad" style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="font-size:11px;color:var(--text-dim)">
+            <th style="padding:6px 8px;text-align:center;width:30px">
+              <input type="checkbox" id="hdr-cb" onchange="toggleAll(this.checked)" checked title="Select/deselect all">
+            </th>
+            <th style="padding:6px 8px">Date</th>
+            <th style="padding:6px 8px">Nickname</th>
+            <th style="padding:6px 8px">Vendor</th>
+            <th style="padding:6px 8px;text-align:right">Amount</th>
+            <th style="padding:6px 8px">Description</th>
+            <th style="padding:6px 8px">Category</th>
+            <th style="padding:6px 8px">Job</th>
+            <th style="padding:6px 8px">Invoice</th>
+            <th style="padding:6px 8px">Trans. Type</th>
+            <th style="padding:6px 8px">Memo</th>
+            <th style="padding:6px 8px;text-align:center">Status</th>
+          </tr>
+        </thead>
+        <tbody id="preview-tbody">
+          {% for row in rows %}
+          {% set is_exact = row.dup_status == 'exact' %}
+          <tr class="imp-row {% if row.dup_status %}dup-{{ row.dup_status }}{% endif %}"
+              id="prow-{{ loop.index0 }}" data-dup="{{ row.dup_status }}" data-idx="{{ loop.index0 }}">
+            <td style="text-align:center">
+              <input type="checkbox" class="imp-cb" data-idx="{{ loop.index0 }}"
+                     {% if not is_exact %}checked{% endif %}
+                     onchange="updateSkipList()">
+            </td>
+            <td style="font-family:monospace">
+              {% if row.is_pending %}
+                <span style="color:var(--yellow,#f59e0b);font-weight:600;font-style:italic">⏳ Pending</span>
+              {% else %}
+                {{ row.entry_date }}
+              {% endif %}
+            </td>
+            <td>{{ row.nickname or '—' }}</td>
+            <td>{{ row.vendor or '—' }}</td>
+            <td style="text-align:right;font-family:monospace;
+                color:{% if row.amount >= 0 %}var(--green,#22c55e){% else %}var(--red,#ef4444){% endif %}">
+              {% if row.amount >= 0 %}+{% endif %}${{ '{:,.2f}'.format(row.amount|abs) }}
+            </td>
+            <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                title="{{ row.description }}">{{ row.description or '—' }}</td>
+            <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.category or '—' }}</td>
+            <td>{{ row.job_code or '—' }}</td>
+            <td>{{ row.invoice_number or '—' }}</td>
+            <td>{{ row.type_of_payment or '—' }}</td>
+            <td>{{ row.memo or '—' }}</td>
+            <td style="text-align:center">
+              {% if row.dup_status == 'exact' %}
+                <span class="dup-tag exact" title="Exact match found in ledger">EXACT DUP</span>
+              {% elif row.dup_status == 'near' %}
+                <span class="dup-tag near" title="Similar entry found within 3 days">NEAR DUP</span>
+              {% elif row.dup_status == 'recurring' %}
+                <span class="dup-tag recurring" title="Matches a recurring pattern">RECURRING</span>
+              {% else %}
+                <span class="dup-tag clean">NEW</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Submit bar -->
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+    <button type="submit" class="btn btn-primary" onclick="prepareSubmit()" id="submit-btn">
+      ✅ Import Selected Rows
+    </button>
+    <a href="/ledger" class="btn btn-outline">Cancel</a>
+    <span id="submit-label" style="font-size:12px;color:var(--text-dim)"></span>
+  </div>
+</form>
+
+<script>
+// All rows as JSON (we encode it once and pass back on confirm)
+// Build skip list from unchecked checkboxes
+function updateSkipList() {
+  const checked   = document.querySelectorAll('.imp-cb:checked').length;
+  const total     = document.querySelectorAll('.imp-cb').length;
+  const skipped   = total - checked;
+  document.getElementById('count-label').textContent =
+    `${checked} of ${total} rows selected (${skipped} will be skipped)`;
+  document.getElementById('submit-label').textContent =
+    `Will import ${checked} entr${checked===1?'y':'ies'}`;
+  document.getElementById('submit-btn').disabled = checked === 0;
+}
+
+function toggleAll(checked) {
+  document.querySelectorAll('.imp-cb').forEach(cb => cb.checked = checked);
+  document.getElementById('hdr-cb').checked = checked;
+  updateSkipList();
+}
+
+function toggleDupStatus(status, skip) {
+  document.querySelectorAll(`.imp-cb`).forEach(cb => {
+    const row = cb.closest('tr');
+    if (row && row.dataset.dup === status) cb.checked = !skip;
+  });
+  updateSkipList();
+}
+
+function prepareSubmit() {
+  const form = document.getElementById('import-form');
+
+  // Remove any previously appended skip_row inputs
+  form.querySelectorAll('input[name="skip_row"]').forEach(el => el.remove());
+
+  // Append one hidden input per skipped row index
+  document.querySelectorAll('.imp-cb').forEach(cb => {
+    if (!cb.checked) {
+      const h = document.createElement('input');
+      h.type = 'hidden';
+      h.name = 'skip_row';
+      h.value = cb.dataset.idx;
+      form.appendChild(h);
+    }
+  });
+}
+
+// Init count on load
+document.addEventListener('DOMContentLoaded', updateSkipList);
+
+// Keyboard: Ctrl+Enter submits
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    const btn = document.getElementById('submit-btn');
+    if (btn && !btn.disabled) { prepareSubmit(); document.getElementById('import-form').submit(); }
+  }
+});
+</script>
+{% endblock %}

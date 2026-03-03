@@ -1,0 +1,430 @@
+{% extends "base.html" %}
+{% block title %}Payroll — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}💼 Payroll{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Payroll{% endblock %}
+
+{% block content %}
+<!-- ── YTD Summary Tiles ── -->
+<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
+  <div class="kpi-tile accent">
+    <div class="kpi-label">Gross Payroll</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(ytd.total_gross or 0) }}</div>
+    <div class="kpi-sub">{{ ytd.run_count }} runs · {{ ytd.employee_count }} employees</div>
+  </div>
+  <div class="kpi-tile green">
+    <div class="kpi-label">Net Pay</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(ytd.total_net or 0) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Employee Taxes</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format((ytd.total_ss or 0) + (ytd.total_medicare or 0) + (ytd.total_fed or 0) + (ytd.total_state or 0)) }}</div>
+    <div class="kpi-sub">SS + Med + Fed + State</div>
+  </div>
+  <div class="kpi-tile yellow">
+    <div class="kpi-label">Employer Taxes</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format((ytd.total_er_ss or 0) + (ytd.total_er_med or 0) + (ytd.total_futa or 0) + (ytd.total_suta or 0)) }}</div>
+    <div class="kpi-sub">SS + Med + FUTA + SUTA</div>
+  </div>
+  <div class="kpi-tile {% if (ytd.total_ot_hrs or 0) > 0 %}yellow{% endif %}">
+    <div class="kpi-label">Hours</div>
+    <div class="kpi-value">{{ '{:,.1f}'.format((ytd.total_std_hrs or 0) + (ytd.total_ot_hrs or 0)) }}h</div>
+    <div class="kpi-sub">
+      {% if (ytd.total_ot_hrs or 0) > 0 %}
+        {{ '{:,.1f}'.format(ytd.total_ot_hrs) }}h OT
+      {% else %}no OT{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ── Filters ── -->
+<div class="card" style="margin-bottom:12px">
+  <div class="card-body" style="padding:10px 14px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="margin:0">
+        <label>Year</label>
+        <select name="year" style="min-width:80px" onchange="this.form.submit()">
+          {% for yr in years %}
+          <option value="{{ yr }}" {% if yr == year_filter %}selected{% endif %}>{{ yr }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Employee</label>
+        <select name="emp" style="min-width:140px">
+          <option value="">All Employees</option>
+          {% for e in employees %}
+          <option value="{{ e.emp_id }}" {% if emp_filter==e.emp_id|string %}selected{% endif %}>{{ e.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Week</label>
+        <select name="week" style="min-width:120px">
+          <option value="">All Weeks</option>
+          {% for w in weeks %}
+          <option value="{{ w.week_number }}" {% if week_filter==w.week_number|string %}selected{% endif %}>
+            Wk {{ w.week_number }} ({{ w.pay_period_start }})
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if emp_filter or week_filter %}
+        <a href="/payroll?year={{ year_filter }}" class="btn btn-outline btn-sm">Clear</a>
+      {% endif %}
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <a href="/payroll/export?year={{ year_filter }}&emp={{ emp_filter }}" class="btn btn-outline btn-sm">⬇ Export CSV</a>
+        <button class="btn btn-outline btn-sm" onclick="openModal('modal-ytd')">📊 YTD Report</button>
+        <button class="btn btn-outline btn-sm" onclick="openModal('modal-liability')">🏛 Employer Taxes</button>
+        <a href="/payroll/new" class="btn btn-primary btn-sm">+ New Run</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Runs Table ── -->
+<div class="card">
+  <div class="card-body no-pad">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px"></th>
+            <th style="width:100px">Pay Period</th>
+            <th style="width:40px;text-align:center">Wk</th>
+            <th>Employee</th>
+            <th style="width:75px;text-align:right">Std Hrs</th>
+            <th style="width:65px;text-align:right">OT Hrs</th>
+            <th style="width:90px;text-align:right">Gross Pay</th>
+            <th style="width:80px;text-align:right">Taxes W/H</th>
+            <th style="width:90px;text-align:right">Net Pay</th>
+            <th style="width:80px">Check #</th>
+            <th style="width:60px">Printed</th>
+            <th style="width:60px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in runs %}
+          <tr class="{% if run.overtime_hours > 0 %}row-ot{% endif %}" id="run-row-{{ run.id }}">
+            <td>
+              <button class="expand-btn" onclick="toggleExpand({{ run.id }})"
+                      style="background:none;border:none;cursor:pointer;color:var(--text-dim);font-size:10px">▶</button>
+            </td>
+            <td class="mono text-dim" style="font-size:11px">
+              {{ run.pay_period_start }}<br>
+              <span style="font-size:10px">→ {{ run.pay_period_end }}</span>
+            </td>
+            <td style="text-align:center">
+              <span class="badge badge-blue" style="font-size:9px">{{ run.week_number }}</span>
+            </td>
+            <td>
+              <div style="font-size:12px;font-weight:500">{{ run.emp_name or '—' }}</div>
+              {% if run.occupation %}<div class="text-dim" style="font-size:10px">{{ run.occupation }}</div>{% endif %}
+            </td>
+            <td style="text-align:right" class="mono">{{ '{:.2f}'.format(run.standard_hours) }}</td>
+            <td style="text-align:right">
+              {% if run.overtime_hours > 0 %}
+                <span class="mono text-yellow" style="font-weight:600">{{ '{:.2f}'.format(run.overtime_hours) }}</span>
+              {% else %}
+                <span class="mono text-dim">—</span>
+              {% endif %}
+            </td>
+            <td style="text-align:right" class="mono text-green" style="font-weight:600">
+              ${{ '{:,.2f}'.format(run.gross_pay) }}
+            </td>
+            <td style="text-align:right" class="mono text-dim" style="font-size:11px">
+              ${{ '{:,.2f}'.format(run.total_withheld) }}
+            </td>
+            <td style="text-align:right" class="mono" style="font-weight:700">
+              ${{ '{:,.2f}'.format(run.net_pay) }}
+            </td>
+            <td class="mono text-dim" style="font-size:11px">{{ run.check_number or '—' }}</td>
+            <td style="text-align:center">
+              {% if run.check_printed %}
+                <span class="text-green" style="font-size:13px" title="Check printed">✅</span>
+              {% else %}
+                <button class="btn btn-xs btn-outline"
+                        onclick="markPrinted({{ run.id }})"
+                        title="Mark as printed">🖨</button>
+              {% endif %}
+            </td>
+            <td>
+              <div class="flex gap-4">
+                <a href="/payroll/{{ run.id }}" class="btn btn-outline btn-xs" title="View / Print">👁</a>
+                <a href="/payroll/{{ run.id }}/edit" class="btn btn-outline btn-xs" title="Edit">✏️</a>
+                <button class="btn btn-danger btn-xs"
+                        onclick="deleteRun({{ run.id }}, '{{ run.emp_name|replace("'","") }}')">🗑</button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Expand: full tax breakdown -->
+          <tr id="expand-{{ run.id }}" style="display:none">
+            <td colspan="12" style="padding:12px 20px;background:var(--bg)">
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;font-size:11px">
+                <div>
+                  <div class="text-dim" style="font-size:9px;text-transform:uppercase;margin-bottom:6px">Earnings</div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>Standard ({{ '{:.2f}'.format(run.standard_hours) }}h × ${{ '{:.2f}'.format(run.standard_pay_rate) }})</span>
+                    <span class="mono">${{ '{:,.2f}'.format(run.standard_pay) }}</span>
+                  </div>
+                  {% if run.overtime_hours > 0 %}
+                  <div class="flex" style="justify-content:space-between">
+                    <span class="text-yellow">OT ({{ '{:.2f}'.format(run.overtime_hours) }}h)</span>
+                    <span class="mono text-yellow">${{ '{:,.2f}'.format(run.overtime_pay) }}</span>
+                  </div>
+                  {% endif %}
+                  {% if run.holiday_hours > 0 %}
+                  <div class="flex" style="justify-content:space-between">
+                    <span>Holiday ({{ '{:.2f}'.format(run.holiday_hours) }}h)</span>
+                    <span class="mono">${{ '{:,.2f}'.format(run.holiday_pay) }}</span>
+                  </div>
+                  {% endif %}
+                </div>
+                <div>
+                  <div class="text-dim" style="font-size:9px;text-transform:uppercase;margin-bottom:6px">Employee W/H</div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>SS (6.2%)</span><span class="mono">${{ '{:,.2f}'.format(run.ss_withheld) }}</span>
+                  </div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>Medicare (1.45%)</span><span class="mono">${{ '{:,.2f}'.format(run.medicare_withheld) }}</span>
+                  </div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>Federal W/H</span><span class="mono">${{ '{:,.2f}'.format(run.fed_withholding) }}</span>
+                  </div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>State W/H</span><span class="mono">${{ '{:,.2f}'.format(run.state_withholding) }}</span>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-dim" style="font-size:9px;text-transform:uppercase;margin-bottom:6px">Employer Taxes</div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>SS Match</span><span class="mono">${{ '{:,.2f}'.format(run.employer_ss) }}</span>
+                  </div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>Medicare Match</span><span class="mono">${{ '{:,.2f}'.format(run.employer_medicare) }}</span>
+                  </div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>FUTA</span><span class="mono">${{ '{:,.2f}'.format(run.futa_amount) }}</span>
+                  </div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>SUTA</span><span class="mono">${{ '{:,.2f}'.format(run.suta_amount) }}</span>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-dim" style="font-size:9px;text-transform:uppercase;margin-bottom:6px">Summary</div>
+                  <div class="flex" style="justify-content:space-between">
+                    <span>Run date</span><span class="mono">{{ run.run_date }}</span>
+                  </div>
+                  {% if run.notes %}
+                  <div style="color:var(--text-dim);margin-top:4px">{{ run.notes }}</div>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="12" class="empty-state" style="padding:40px;text-align:center">
+              <div style="font-size:36px;margin-bottom:10px">💼</div>
+              <p class="text-dim">No payroll runs{% if emp_filter or week_filter %} matching filters{% endif %}.</p>
+              <a href="/payroll/new" class="btn btn-primary mt-8">+ New Run</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pages > 1 %}
+    <div class="flex gap-8" style="padding:10px;justify-content:center;border-top:1px solid var(--border)">
+      {% if page > 1 %}
+        <a href="?year={{ year_filter }}&page={{ page-1 }}&emp={{ emp_filter }}&week={{ week_filter }}" class="btn btn-outline btn-sm">← Prev</a>
+      {% endif %}
+      <span class="text-dim" style="align-self:center">Page {{ page }}/{{ pages }}</span>
+      {% if page < pages %}
+        <a href="?year={{ year_filter }}&page={{ page+1 }}&emp={{ emp_filter }}&week={{ week_filter }}" class="btn btn-outline btn-sm">Next →</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- YTD Report Modal -->
+<div class="modal-overlay" id="modal-ytd">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header">
+      <h3>📊 YTD Wage & Tax Summary — {{ year_filter }}</h3>
+      <button class="modal-close" onclick="closeModal('modal-ytd')">×</button>
+    </div>
+    <div class="modal-body" id="ytd-content" style="padding:0">
+      <p class="text-dim" style="padding:20px">Loading…</p>
+    </div>
+  </div>
+</div>
+
+<!-- Employer Liability Modal -->
+<div class="modal-overlay" id="modal-liability">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <h3>🏛 Employer Tax Liability — {{ year_filter }}</h3>
+      <button class="modal-close" onclick="closeModal('modal-liability')">×</button>
+    </div>
+    <div class="modal-body" id="liability-content" style="padding:0">
+      <p class="text-dim" style="padding:20px">Loading…</p>
+    </div>
+  </div>
+</div>
+
+<!-- Mark Printed Modal -->
+<div class="modal-overlay" id="modal-printed">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <h3>🖨 Mark Check Printed</h3>
+      <button class="modal-close" onclick="closeModal('modal-printed')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Check Number</label>
+        <input type="text" id="print-check-num" placeholder="e.g. 1042">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-printed')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmPrinted()">Mark Printed</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _printRunId = null;
+
+function toggleExpand(id) {
+  const row = document.getElementById('expand-'+id);
+  const btn = document.querySelector('#run-row-'+id+' .expand-btn');
+  if (!row) return;
+  const open = row.style.display !== 'none';
+  row.style.display = open ? 'none' : '';
+  if (btn) btn.textContent = open ? '▶' : '▼';
+}
+
+function deleteRun(id, name) {
+  if (!confirm(`Delete payroll run for ${name}?\nYou can undo this.`)) return;
+  fetch(`/payroll/${id}/delete`, {method:'POST', headers:{'Content-Type':'application/json'}})
+    .then(r=>r.json()).then(d=>{
+      if (d.success) {
+        document.getElementById('run-row-'+id)?.remove();
+        document.getElementById('expand-'+id)?.remove();
+        showToast('Deleted','success');
+      }
+    });
+}
+
+function markPrinted(runId) {
+  _printRunId = runId;
+  document.getElementById('print-check-num').value = '';
+  openModal('modal-printed');
+  setTimeout(() => document.getElementById('print-check-num').focus(), 100);
+}
+
+async function confirmPrinted() {
+  const checkNum = document.getElementById('print-check-num').value;
+  const res = await fetch(`/payroll/${_printRunId}/mark-printed`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({check_number: checkNum})
+  });
+  const d = await res.json();
+  if (d.success) {
+    showToast('Marked as printed', 'success');
+    closeModal('modal-printed');
+    setTimeout(() => window.location.reload(), 600);
+  }
+}
+
+// ── YTD Report ────────────────────────────────────────────────
+document.getElementById('modal-ytd')?.addEventListener('show', loadYtd);
+function openYtd() { openModal('modal-ytd'); loadYtd(); }
+async function loadYtd() {
+  const year = {{ year_filter }};
+  const res  = await fetch(`/api/payroll/ytd?year=${year}`);
+  const data = await res.json();
+  const cont = document.getElementById('ytd-content');
+  if (!data.length) { cont.innerHTML = '<p class="text-dim" style="padding:20px">No data.</p>'; return; }
+  let html = `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>Employee</th><th style="text-align:right">Hours</th><th style="text-align:right">OT Hrs</th>
+      <th style="text-align:right">Gross</th><th style="text-align:right">Net</th>
+      <th style="text-align:right">SS W/H</th><th style="text-align:right">Med W/H</th>
+      <th style="text-align:right">Fed W/H</th><th style="text-align:right">State W/H</th>
+    </tr></thead><tbody>`;
+  for (const r of data) {
+    html += `<tr>
+      <td style="font-size:12px">${r.emp_name||'—'}<br><span class="text-dim" style="font-size:10px">${r.occupation||''}</span></td>
+      <td style="text-align:right" class="mono">${(+r.ytd_hours).toFixed(2)}</td>
+      <td style="text-align:right" class="mono ${r.ytd_ot_hours > 0 ? 'text-yellow' : 'text-dim'}">${(+r.ytd_ot_hours).toFixed(2)}</td>
+      <td style="text-align:right" class="mono text-green">$${(+r.ytd_gross).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+      <td style="text-align:right" class="mono">$${(+r.ytd_net).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+      <td style="text-align:right" class="mono text-dim">$${(+r.ytd_ss_withheld).toFixed(2)}</td>
+      <td style="text-align:right" class="mono text-dim">$${(+r.ytd_medicare_withheld).toFixed(2)}</td>
+      <td style="text-align:right" class="mono text-dim">$${(+r.ytd_fed_withheld).toFixed(2)}</td>
+      <td style="text-align:right" class="mono text-dim">$${(+r.ytd_state_withheld).toFixed(2)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table></div>';
+  cont.innerHTML = html;
+}
+
+// ── Employer Liability ─────────────────────────────────────────
+async function loadLiability() {
+  const year = {{ year_filter }};
+  const res  = await fetch(`/api/payroll/employer-liability?year=${year}`);
+  const data = await res.json();
+  const cont = document.getElementById('liability-content');
+  let html = `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>Quarter</th><th style="text-align:right">Gross</th>
+      <th style="text-align:right">ER SS</th><th style="text-align:right">ER Med</th>
+      <th style="text-align:right">FUTA</th><th style="text-align:right">SUTA</th>
+      <th style="text-align:right">Total ER</th>
+    </tr></thead><tbody>`;
+  for (const q of data.by_quarter) {
+    const total = (+q.er_ss)+(+q.er_medicare)+(+q.futa)+(+q.suta);
+    html += `<tr>
+      <td><strong>${q.quarter}</strong></td>
+      <td style="text-align:right" class="mono">$${(+q.gross).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+      <td style="text-align:right" class="mono">$${(+q.er_ss).toFixed(2)}</td>
+      <td style="text-align:right" class="mono">$${(+q.er_medicare).toFixed(2)}</td>
+      <td style="text-align:right" class="mono">$${(+q.futa).toFixed(2)}</td>
+      <td style="text-align:right" class="mono">$${(+q.suta).toFixed(2)}</td>
+      <td style="text-align:right" class="mono text-yellow"><strong>$${total.toFixed(2)}</strong></td>
+    </tr>`;
+  }
+  const t = data.total;
+  const totalEr = (+t.er_ss)+(+t.er_medicare)+(+t.futa)+(+t.suta);
+  html += `<tr style="background:var(--bg);font-weight:700;border-top:2px solid var(--border)">
+    <td>Total ${year}</td>
+    <td style="text-align:right" class="mono">$${(+t.gross).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+    <td style="text-align:right" class="mono">$${(+t.er_ss).toFixed(2)}</td>
+    <td style="text-align:right" class="mono">$${(+t.er_medicare).toFixed(2)}</td>
+    <td style="text-align:right" class="mono">$${(+t.futa).toFixed(2)}</td>
+    <td style="text-align:right" class="mono">$${(+t.suta).toFixed(2)}</td>
+    <td style="text-align:right" class="mono text-yellow">$${totalEr.toFixed(2)}</td>
+  </tr></tbody></table></div>`;
+  cont.innerHTML = html;
+}
+
+// Override openModal to load report data on open
+const _origOpen = window.openModal;
+window.openModal = function(id) {
+  if (_origOpen) _origOpen(id);
+  if (id === 'modal-ytd')       loadYtd();
+  if (id === 'modal-liability') loadLiability();
+};
+
+const style = document.createElement('style');
+style.textContent = `.row-ot { background: rgba(243,156,18,0.03); }`;
+document.head.appendChild(style);
+</script>
+{% endblock %}

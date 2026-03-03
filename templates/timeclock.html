@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Time Clock Log — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}⏱ Time Clock Log{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Time Clock{% endblock %}
+
+{% block content %}
+<div class="section-header">
+  <h2>Program Time Clock</h2>
+  <div class="actions">
+    <span class="text-dim" style="font-size:13px">
+      Total: <strong>{{ '{:.1f}'.format(total_hours or 0) }} hrs</strong>
+    </span>
+  </div>
+</div>
+
+{% if not config.time_tracker_enabled %}
+<div class="alert alert-warning">
+  ⚠️ Time Clock is currently <strong>disabled</strong>. Enable it in <a href="/settings">Settings → Program Time Clock</a>.
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Start</th>
+          <th>End</th>
+          <th style="text-align:right">Active Time</th>
+          <th>Work Description</th>
+          <th>Tags</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sessions %}
+        <tr>
+          <td class="mono text-dim">{{ s.start_time[:10] }}</td>
+          <td class="mono text-dim">{{ s.start_time[11:16] }}</td>
+          <td class="mono text-dim">{{ s.end_time[11:16] if s.end_time else '—' }}</td>
+          <td style="text-align:right">
+            {% if s.active_hours %}
+            <strong>{{ '{:.2f}'.format(s.active_hours) }}h</strong>
+            <span class="text-dim" style="font-size:10px">({{ '{:.0f}'.format(s.active_minutes or 0) }}m)</span>
+            {% else %}
+            <span class="text-dim">—</span>
+            {% endif %}
+          </td>
+          <td style="max-width:300px">{{ s.description or '—' }}</td>
+          <td>
+            {% for tag in (s.tags or '').split(',') %}
+              {% if tag.strip() %}
+              <span class="badge badge-gray" style="font-size:9px">{{ tag.strip() }}</span>
+              {% endif %}
+            {% endfor %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="text-dim" style="text-align:center;padding:30px">
+            No sessions recorded yet.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Monthly summary -->
+{% if sessions %}
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><span class="card-title">Monthly Summary</span></div>
+  <div class="card-body">
+    <div id="monthly-summary" style="display:flex;flex-wrap:wrap;gap:8px">
+      <!-- populated by JS -->
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+// Build monthly summary from sessions data
+const sessions = {{ sessions | tojson }};
+const byMonth = {};
+sessions.forEach(s => {
+  const mo = (s.start_time || '').substring(0, 7);
+  if (!mo) return;
+  if (!byMonth[mo]) byMonth[mo] = 0;
+  byMonth[mo] += (s.active_minutes || 0) / 60;
+});
+const container = document.getElementById('monthly-summary');
+if (container) {
+  const months = Object.keys(byMonth).sort().reverse();
+  months.forEach(mo => {
+    const hrs = byMonth[mo];
+    const el = document.createElement('div');
+    el.className = 'kpi-tile';
+    el.style.minWidth = '120px';
+    el.innerHTML = `<div class="kpi-label">${mo}</div><div class="kpi-value">${hrs.toFixed(1)}h</div>`;
+    container.appendChild(el);
+  });
+}
+</script>
+{% endblock %}

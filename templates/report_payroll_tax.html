@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Payroll Tax Ledger {{ year }} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}🧾 Payroll Tax Ledger{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reports">Reports</a> / Payroll Tax Ledger{% endblock %}
+
+{% block content %}
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center">
+  <h2 style="font-size:18px;font-weight:700">Payroll Tax Ledger — {{ year }}</h2>
+  <form method="GET" class="flex gap-8" style="margin-left:auto">
+    <select name="year" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print</button>
+  </form>
+</div>
+
+{% macro money(v) %}${{ '{:,.2f}'.format((v or 0)|float) }}{% endmacro %}
+
+<!-- YTD Summary Tiles -->
+<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:16px">
+  <div class="kpi-tile"><div class="kpi-label">Gross Pay</div><div class="kpi-value">${{ '{:,.0f}'.format((ytd.gross or 0)|float) }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">Net Pay</div><div class="kpi-value">${{ '{:,.0f}'.format((ytd.net or 0)|float) }}</div></div>
+  <div class="kpi-tile yellow"><div class="kpi-label">Form 941 Liability</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(((ytd.ee_ss or 0)+(ytd.ee_med or 0)+(ytd.fed_wh or 0)+(ytd.er_ss or 0)+(ytd.er_med or 0))|float) }}</div>
+    <div class="kpi-sub">EE + ER FICA + Fed WH</div>
+  </div>
+  <div class="kpi-tile"><div class="kpi-label">FUTA (Fed)</div><div class="kpi-value">${{ '{:,.0f}'.format((ytd.futa or 0)|float) }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">SUTA (State)</div><div class="kpi-value">${{ '{:,.0f}'.format((ytd.suta or 0)|float) }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">State WH</div><div class="kpi-value">${{ '{:,.0f}'.format((ytd.state_wh or 0)|float) }}</div></div>
+</div>
+
+<!-- Quarterly 941 Summary -->
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header"><span class="card-title">Quarterly Summary (Form 941 / 940)</span></div>
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th>Quarter</th>
+          <th style="text-align:right">Gross Pay</th>
+          <th style="text-align:right">EE SS</th>
+          <th style="text-align:right">EE Medicare</th>
+          <th style="text-align:right">Fed WH</th>
+          <th style="text-align:right">ER SS</th>
+          <th style="text-align:right">ER Medicare</th>
+          <th style="text-align:right;background:rgba(243,156,18,0.08)">941 Liability</th>
+          <th style="text-align:right">FUTA</th>
+          <th style="text-align:right">SUTA</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for q in quarters %}
+        <tr>
+          <td style="font-weight:600">Q{{ q.quarter }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.gross) }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.ee_ss) }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.ee_med) }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.fed_wh) }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.er_ss) }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.er_med) }}</td>
+          <td style="text-align:right;font-weight:700;background:rgba(243,156,18,0.05)" class="mono text-yellow">{{ money(q.liability_941) }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.futa) }}</td>
+          <td style="text-align:right" class="mono">{{ money(q.suta) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr style="font-weight:800;background:var(--bg)">
+          <td>YTD TOTAL</td>
+          <td style="text-align:right" class="mono">{{ money(ytd.gross) }}</td>
+          <td style="text-align:right" class="mono">{{ money(ytd.ee_ss) }}</td>
+          <td style="text-align:right" class="mono">{{ money(ytd.ee_med) }}</td>
+          <td style="text-align:right" class="mono">{{ money(ytd.fed_wh) }}</td>
+          <td style="text-align:right" class="mono">{{ money(ytd.er_ss) }}</td>
+          <td style="text-align:right" class="mono">{{ money(ytd.er_med) }}</td>
+          <td style="text-align:right;background:rgba(243,156,18,0.08)" class="mono text-yellow">
+            {{ money(((ytd.ee_ss or 0)+(ytd.ee_med or 0)+(ytd.fed_wh or 0)+(ytd.er_ss or 0)+(ytd.er_med or 0))|float) }}
+          </td>
+          <td style="text-align:right" class="mono">{{ money(ytd.futa) }}</td>
+          <td style="text-align:right" class="mono">{{ money(ytd.suta) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- Per-Employee YTD -->
+{% if employees %}
+<div class="card">
+  <div class="card-header"><span class="card-title">Employee YTD Summary</span></div>
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th>Employee</th>
+          <th style="text-align:right">Checks</th>
+          <th style="text-align:right">Gross Pay</th>
+          <th style="text-align:right">Net Pay</th>
+          <th style="text-align:right">Total SS (EE+ER)</th>
+          <th style="text-align:right">Total Medicare (EE+ER)</th>
+          <th style="text-align:right">FUTA</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in employees %}
+        <tr>
+          <td style="font-weight:500">{{ e.emp_name }}</td>
+          <td style="text-align:right" class="text-dim">{{ e.checks }}</td>
+          <td style="text-align:right" class="mono">{{ money(e.gross) }}</td>
+          <td style="text-align:right" class="mono">{{ money(e.net) }}</td>
+          <td style="text-align:right" class="mono">{{ money(e.total_ss) }}</td>
+          <td style="text-align:right" class="mono">{{ money(e.total_med) }}</td>
+          <td style="text-align:right" class="mono">{{ money(e.futa) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

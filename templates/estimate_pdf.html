@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ est.estimate_number }} — {{ config.company_name or '' }}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Garamond', 'Georgia', serif; font-size: 11pt; color: #222; background: #fff; }
+  .page { max-width: 800px; margin: 0 auto; padding: 40px; }
+
+  /* Header */
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; border-bottom: 3px solid #1a3a5c; padding-bottom: 20px; }
+  .company-name { font-size: 22pt; font-weight: 900; color: #1a3a5c; }
+  .company-sub { font-size: 9pt; color: #666; line-height: 1.6; margin-top: 4px; }
+  .estimate-title { text-align: right; }
+  .estimate-title h1 { font-size: 18pt; color: #1a3a5c; font-weight: 900; }
+  .estimate-title .num { font-size: 13pt; color: #555; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 9pt; font-weight: 700; }
+  .badge-draft     { background: #eee; color: #555; }
+  .badge-sent      { background: #dbeafe; color: #1d4ed8; }
+  .badge-accepted  { background: #dcfce7; color: #15803d; }
+  .badge-rejected  { background: #fee2e2; color: #dc2626; }
+
+  /* Meta grid */
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 28px; }
+  .meta-block h3 { font-size: 9pt; text-transform: uppercase; color: #888; letter-spacing: 0.5px; margin-bottom: 6px; border-bottom: 1px solid #ddd; padding-bottom: 3px; }
+  .meta-block p  { font-size: 10pt; line-height: 1.7; }
+
+  /* Line items table */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+  thead th { background: #1a3a5c; color: #fff; padding: 8px 10px; font-size: 9pt; text-align: left; font-family: 'Garamond','Georgia',serif; }
+  thead th.right { text-align: right; }
+  tbody tr:nth-child(even) { background: #f8f9fa; }
+  tbody td { padding: 7px 10px; font-size: 10pt; border-bottom: 1px solid #eee; }
+  tbody td.right { text-align: right; font-family: monospace; }
+  tfoot td { padding: 8px 10px; font-weight: 700; border-top: 2px solid #1a3a5c; }
+  tfoot td.right { text-align: right; font-family: monospace; }
+
+  /* Totals box */
+  .totals-box { float: right; width: 260px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; margin-bottom: 20px; }
+  .totals-row { display: flex; justify-content: space-between; padding: 6px 14px; font-size: 10pt; border-bottom: 1px solid #eee; }
+  .totals-row.dim { color: #777; font-size: 9.5pt; }
+  .totals-row.total { background: #1a3a5c; color: #fff; font-size: 13pt; font-weight: 900; padding: 10px 14px; }
+  .totals-row .mono { font-family: monospace; }
+  .clearfix::after { content: ''; display: block; clear: both; }
+
+  /* Notes */
+  .notes-box { background: #f8f9fa; border-left: 4px solid #1a3a5c; padding: 12px 16px; margin-bottom: 24px; font-size: 10pt; line-height: 1.7; }
+  .notes-box h3 { font-size: 9pt; text-transform: uppercase; color: #888; margin-bottom: 6px; }
+
+  /* Footer */
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 2px solid #1a3a5c; text-align: center; font-size: 8.5pt; color: #888; }
+
+  /* Print */
+  @media print {
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .no-print { display: none !important; }
+    .page { padding: 20px; }
+  }
+  {% if customer_view %}
+  .customer-badge { background:#e8f5e9;color:#2e7d32;padding:4px 12px;border-radius:12px;font-size:9pt;font-weight:700;display:inline-block;margin-bottom:8px; }
+  {% endif %}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Print button -->
+  <div class="no-print" style="text-align:right;margin-bottom:16px">
+    <button onclick="window.print()" style="padding:8px 20px;background:#1a3a5c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">🖨 Print / Save as PDF</button>
+    <a href="/estimates/{{ est.id }}" style="margin-left:8px;padding:8px 20px;border:1px solid #ccc;border-radius:4px;text-decoration:none;color:#333;font-size:12px">← Back</a>
+  </div>
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="company-name">{{ config.company_name or 'Your Company' }}</div>
+      <div class="company-sub">
+        {% if config.address %}{{ config.address }}<br>{% endif %}
+        {% if config.city_state_zip %}{{ config.city_state_zip }}<br>{% endif %}
+        {% if config.phone %}📞 {{ config.phone }}{% endif %}
+        {% if config.email %}&nbsp; ✉ {{ config.email }}{% endif %}
+        {% if config.license_number %}<br>Lic. {{ config.license_number }}{% endif %}
+      </div>
+    </div>
+    <div class="estimate-title">
+      <h1>ESTIMATE</h1>
+      <div class="num">{{ est.estimate_number }}</div>
+      <div style="margin-top:6px">
+        <span class="badge badge-{{ est.status|lower }}">{{ est.status }}</span>
+      </div>
+      <div style="font-size:9pt;color:#666;margin-top:6px">Date: {{ est.estimate_date }}</div>
+      {% if est.version_number and est.version_number > 1 %}
+      <div style="font-size:9pt;color:#888">Version {{ est.version_number }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Client / Job Meta -->
+  <div class="meta-grid">
+    <div class="meta-block">
+      <h3>Prepared For</h3>
+      <p>
+        <strong>{{ est.client_name or '—' }}</strong>
+        {% if est.address %}<br>{{ est.address }}{% endif %}
+        {% if est.city_state_zip %}<br>{{ est.city_state_zip }}{% endif %}
+        {% if est.phone1 %}<br>📞 {{ est.phone1 }}{% endif %}
+        {% if est.email1 %}<br>✉ {{ est.email1 }}{% endif %}
+      </p>
+    </div>
+    <div class="meta-block">
+      <h3>Project Details</h3>
+      <p>
+        {% if est.job_code %}<strong>Job:</strong> {{ est.job_code }}<br>{% endif %}
+        {% if est.job_desc %}<strong>Description:</strong> {{ est.job_desc }}<br>{% endif %}
+        <strong>Estimate Date:</strong> {{ est.estimate_date }}<br>
+        <strong>Prepared by:</strong> {{ config.owner_name or config.company_name or '—' }}
+      </p>
+    </div>
+  </div>
+
+  <!-- Notes / Scope -->
+  {% if est.notes %}
+  <div class="notes-box">
+    <h3>Scope of Work / Notes</h3>
+    {{ est.notes }}
+  </div>
+  {% endif %}
+
+  <!-- Line Items Table -->
+  {% if customer_view %}
+  <!-- CUSTOMER VIEW: categories + sell price only, no cost breakdown -->
+  <table>
+    <thead>
+      <tr>
+        <th>Scope Item</th>
+        <th class="right" style="width:120px">Price</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for li in line_items %}
+      <tr>
+        <td>{{ li.category }}{% if li.notes %}<br><span style="font-size:9pt;color:#777">{{ li.notes }}</span>{% endif %}</td>
+        <td class="right" style="font-weight:700">${{ '{:,.2f}'.format(li.sell_price|float if li.sell_price else li.total_cost|float) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="2" style="text-align:center;color:#888;padding:20px">No line items.</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td><strong>Scope Total</strong></td>
+        <td class="right">${{ '{:,.2f}'.format(totals.total_estimate) }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  {% else %}
+  <!-- INTERNAL VIEW: full cost breakdown -->
+  <table>
+    <thead>
+      <tr>
+        <th>Category / Description</th>
+        <th class="right" style="width:80px">Labor Hrs</th>
+        <th class="right" style="width:90px">Labor</th>
+        <th class="right" style="width:90px">Materials</th>
+        <th class="right" style="width:80px">Subs</th>
+        <th class="right" style="width:80px">Other</th>
+        <th class="right" style="width:95px">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for li in line_items %}
+      <tr>
+        <td>{{ li.category }}{% if li.notes %}<br><span style="font-size:9pt;color:#777">{{ li.notes }}</span>{% endif %}</td>
+        <td class="right">{{ '%.2f'|format(li.labor_hours_estimated|float) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(li.labor_cost|float) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(li.materials_cost|float) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(li.subcontractor_cost|float) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(li.other_cost|float) }}</td>
+        <td class="right" style="font-weight:700">${{ '{:,.2f}'.format(li.total_cost|float) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" style="text-align:center;color:#888;padding:20px">No line items.</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td><strong>Direct Cost Totals</strong></td>
+        <td class="right">{{ '%.2f'|format(line_items|sum(attribute='labor_hours_estimated')) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(totals.total_labor) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(totals.total_materials) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(totals.total_subs) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(totals.total_other) }}</td>
+        <td class="right">${{ '{:,.2f}'.format(totals.total_direct) }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  {% endif %}
+
+  <!-- Totals Box -->
+  <div class="clearfix">
+    <div class="totals-box">
+      {% if not customer_view %}
+      <div class="totals-row dim"><span>Direct Costs</span><span class="mono">${{ '{:,.2f}'.format(totals.total_direct) }}</span></div>
+      {% if est.overhead_pct %}
+      <div class="totals-row dim"><span>Overhead ({{ est.overhead_pct|round(1) }}%)</span><span class="mono">${{ '{:,.2f}'.format(totals.overhead_amt) }}</span></div>
+      {% endif %}
+      {% if est.insurance_pct %}
+      <div class="totals-row dim"><span>Insurance ({{ est.insurance_pct|round(1) }}%)</span><span class="mono">${{ '{:,.2f}'.format(totals.insurance_amt) }}</span></div>
+      {% endif %}
+      {% if est.owner_wages_pct %}
+      <div class="totals-row dim"><span>Owner Wages ({{ est.owner_wages_pct|round(1) }}%)</span><span class="mono">${{ '{:,.2f}'.format(totals.owner_wages_amt) }}</span></div>
+      {% endif %}
+      {% if est.profit_pct %}
+      <div class="totals-row dim"><span>Profit ({{ est.profit_pct|round(1) }}%)</span><span class="mono">${{ '{:,.2f}'.format(totals.profit_amt) }}</span></div>
+      {% endif %}
+      {% endif %}
+      <div class="totals-row total"><span>TOTAL ESTIMATE</span><span class="mono">${{ '{:,.2f}'.format(totals.total_estimate) }}</span></div>
+    </div>
+    <div style="max-width:calc(100% - 280px)">
+      <p style="font-size:9pt;color:#888;line-height:1.7">
+        This estimate is valid for 30 days from the date above.
+        Actual costs may vary. A signed contract is required before work begins.
+      </p>
+    </div>
+  </div>
+
+  <!-- Signature Lines -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:40px">
+    <div>
+      <div style="border-bottom:1px solid #333;margin-bottom:6px;height:30px"></div>
+      <div style="font-size:9pt;color:#666">Client Signature / Date</div>
+    </div>
+    <div>
+      <div style="border-bottom:1px solid #333;margin-bottom:6px;height:30px"></div>
+      <div style="font-size:9pt;color:#666">{{ config.owner_name or 'Contractor' }} / Date</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    {{ config.company_name or '' }}{% if config.license_number %} · Lic. {{ config.license_number }}{% endif %}
+    {% if config.phone %} · {{ config.phone }}{% endif %}
+    {% if config.email %} · {{ config.email }}{% endif %}
+    <br>{{ est.estimate_number }} — Generated {{ est.estimate_date }}
+  </div>
+</div>
+</body>
+</html>

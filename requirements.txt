@@ -1,0 +1,8 @@
+flask>=3.0.0
+python-dateutil>=2.9.0
+openpyxl>=3.1.2
+odfpy>=1.4.1
+# Phase 5+: uncomment as needed
+# weasyprint>=60.0    # PDF generation
+# reportlab>=4.0.0    # Alternative PDF
+# pyinstaller>=6.0.0  # Phase 10 packaging

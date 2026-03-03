@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}{{ contractor.company_name }} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}{{ contractor.company_name }}{% endblock %}
+{% block breadcrumb %}
+  <a href="/">Home</a> / <a href="/contractors">Contractors</a> / {{ contractor.company_name }}
+{% endblock %}
+
+{% block content %}
+<div class="grid-2" style="align-items:start">
+  <!-- Left: Info -->
+  <div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">
+          {% for i in range(contractor.rank_preference | int) %}⭐{% endfor %}
+          {{ contractor.company_name }}
+        </span>
+        <div class="card-actions">
+          <a href="/contractors/{{ contractor.id }}/edit" class="btn btn-outline btn-sm">✏️ Edit</a>
+        </div>
+      </div>
+      <div class="card-body">
+        {% if contractor.trade_type %}
+        <span class="badge badge-blue" style="margin-bottom:12px">{{ contractor.trade_type }}</span>
+        {% endif %}
+        {% if contractor.requires_1099 %}
+        <span class="badge badge-yellow" style="margin-bottom:12px">Requires 1099-NEC</span>
+        {% endif %}
+        <table style="width:100%">
+          {% macro row(label, value, href=None) %}
+          <tr>
+            <td class="text-dim" style="padding:4px 0;width:130px;font-size:11px">{{ label }}</td>
+            <td style="padding:4px 0">
+              {% if href and value %}<a href="{{ href }}" style="color:var(--accent)">{{ value }}</a>
+              {% elif value %}{{ value }}
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+          </tr>
+          {% endmacro %}
+          {{ row('Contact', contractor.contact_person) }}
+          {{ row('Phone', contractor.phone, 'tel:' + (contractor.phone or '')) }}
+          {{ row('Cell', contractor.cell, 'tel:' + (contractor.cell or '')) }}
+          {{ row('Email', contractor.email, 'mailto:' + (contractor.email or '')) }}
+          {{ row('Website', contractor.website, contractor.website) }}
+          {{ row('Address', contractor.address) }}
+          {{ row('License #', contractor.license_number) }}
+        </table>
+        {% if contractor.notes %}
+        <hr class="dim">
+        <p class="text-dim" style="font-size:11px">{{ contractor.notes }}</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Payment Summary -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">💳 Payment Summary</span></div>
+      <div class="card-body">
+        <div class="kpi-grid" style="grid-template-columns:1fr 1fr">
+          <div class="kpi-tile accent">
+            <div class="kpi-label">YTD Payments</div>
+            <div class="kpi-value" style="font-size:18px">${{ '{:,.2f}'.format(ytd_pay or 0) }}</div>
+            <div class="kpi-sub">This year</div>
+          </div>
+          <div class="kpi-tile">
+            <div class="kpi-label">All Time</div>
+            <div class="kpi-value" style="font-size:18px">${{ '{:,.2f}'.format(all_time_pay or 0) }}</div>
+          </div>
+        </div>
+        {% if contractor.requires_1099 %}
+        <div class="alert alert-warning" style="margin-top:12px;margin-bottom:0">
+          ⚠️ 1099-NEC required if YTD payments ≥ $600
+          {% if (ytd_pay or 0) >= 600 %}
+            — <strong>Threshold reached!</strong>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Certs + Recent Payments -->
+  <div>
+    <!-- Certificates -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">📜 Certificates (COI)</span>
+        <div class="card-actions">
+          <button class="btn btn-primary btn-sm" onclick="openModal('modal-add-cert')">+ Add Cert</button>
+        </div>
+      </div>
+      <div class="card-body no-pad">
+        {% if certs %}
+        <table>
+          <thead>
+            <tr><th>Type</th><th>Start</th><th>End</th><th>Status</th><th>File</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for c in certs %}
+            <tr>
+              <td>{{ c.cert_type or 'General' }}</td>
+              <td class="mono dim">{{ c.start_date or '—' }}</td>
+              <td class="mono {% if c.status_info.color=='red' %}text-red{% elif c.status_info.color=='yellow' %}text-yellow{% endif %}">
+                {{ c.end_date or '—' }}
+              </td>
+              <td>
+                <span class="badge badge-{{ c.status_info.color }}">{{ c.status_info.status }}</span>
+              </td>
+              <td class="dim" style="font-size:11px">{{ c.cert_filename or '—' }}</td>
+              <td>
+                <form method="POST" action="/certs/{{ c.id }}/delete"
+                      onsubmit="return confirm('Remove this certificate?')">
+                  <button type="submit" class="btn btn-danger btn-xs">Del</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+          <p>No certificates on file.</p>
+          <button class="btn btn-primary btn-sm mt-8" onclick="openModal('modal-add-cert')">Add Certificate</button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Recent Payments -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">💰 Recent Payments (from Ledger)</span>
+        <div class="card-actions">
+          <a href="/ledger?vendor={{ contractor.company_name | urlencode }}" class="btn btn-outline btn-xs">View All</a>
+        </div>
+      </div>
+      <div class="card-body no-pad">
+        {% if payments %}
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Job</th><th>Description</th><th style="text-align:right">Amount</th></tr>
+          </thead>
+          <tbody>
+            {% for p in payments %}
+            <tr>
+              <td class="mono dim">{{ p.entry_date }}</td>
+              <td>{% if p.job_code %}<span class="badge badge-blue">{{ p.job_code }}</span>{% else %}—{% endif %}</td>
+              <td class="dim">{{ p.description or '—' }}</td>
+              <td class="amount">${{ '{:,.2f}'.format(p.amount) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state"><p>No payments recorded yet.</p></div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Certificate Modal -->
+<div class="modal-overlay" id="modal-add-cert">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <h3>Add Certificate — {{ contractor.company_name }}</h3>
+      <button class="modal-close" onclick="closeModal('modal-add-cert')">×</button>
+    </div>
+    <div class="modal-body">
+      <form method="POST" action="/contractors/{{ contractor.id }}/certs/add"
+            class="form-grid" style="grid-template-columns:1fr 1fr">
+        <input type="hidden" name="company_name" value="{{ contractor.company_name }}">
+        <div class="form-group full">
+          <label>Certificate Type</label>
+          <input type="text" name="cert_type"
+                 placeholder="General Liability, Workers Comp, Auto…"
+                 list="cert-types">
+          <datalist id="cert-types">
+            <option value="General Liability">
+            <option value="Workers Compensation">
+            <option value="Commercial Auto">
+            <option value="Umbrella">
+          </datalist>
+        </div>
+        <div class="form-group">
+          <label>Start Date</label>
+          <input type="date" name="start_date">
+        </div>
+        <div class="form-group">
+          <label>End Date <span class="req">*</span></label>
+          <input type="date" name="end_date" required>
+        </div>
+        <div class="form-group full">
+          <label>Certificate Filename
+            <span class="tip">e.g. "ABC Insurance 01-15-25_01-15-26.pdf"</span>
+          </label>
+          <input type="text" name="cert_filename"
+                 placeholder="CompanyName MM-DD-YY_MM-DD-YY.pdf">
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <input type="text" name="notes" placeholder="Policy number, agent name…">
+        </div>
+        <div class="form-group full">
+          <button type="submit" class="btn btn-primary">💾 Save Certificate</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
+});
+</script>
+{% endblock %}

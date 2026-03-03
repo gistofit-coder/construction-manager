@@ -1,0 +1,295 @@
+{% extends "base.html" %}
+{% block title %}Payroll Run — {{ run.emp_name }} Wk {{ run.week_number }} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}💼 Payroll Run — {{ run.emp_name }}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/payroll">Payroll</a> / {{ run.emp_name }} · Wk {{ run.week_number }}{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="flex gap-8" style="margin-bottom:16px;align-items:flex-start;flex-wrap:wrap">
+  <div>
+    <h1 style="font-size:20px;font-weight:700">{{ run.emp_name }} — Week {{ run.week_number }}, {{ run.year }}</h1>
+    <div class="text-dim" style="font-size:12px">
+      Period: {{ run.pay_period_start }} → {{ run.pay_period_end }} · Run date: {{ run.run_date }}
+    </div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    {% if not run.check_printed %}
+      <button class="btn btn-primary" onclick="openModal('modal-print')">🖨 Mark Check Printed</button>
+    {% else %}
+      <span class="badge badge-green" style="font-size:12px;align-self:center">✅ Check #{{ run.check_number }} Printed</span>
+    {% endif %}
+    <button class="btn btn-outline" onclick="window.print()">🖨 Print / PDF</button>
+    <a href="/payroll/{{ run.id }}/edit" class="btn btn-outline">✏️ Edit</a>
+    <button class="btn btn-danger btn-sm"
+            onclick="if(confirm('Delete this run?')) { fetch('/payroll/{{ run.id }}/delete',{method:'POST'}).then(()=>window.location='/payroll'); }">🗑</button>
+  </div>
+</div>
+
+<div class="grid-2" style="gap:16px;margin-bottom:16px">
+  <!-- Earnings breakdown -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">Earnings</span></div>
+    <div class="card-body">
+      <table style="width:100%">
+        <thead>
+          <tr>
+            <th style="text-align:left;font-size:10px;color:var(--text-dim);font-weight:600">Type</th>
+            <th style="text-align:right;font-size:10px;color:var(--text-dim);font-weight:600">Hours</th>
+            <th style="text-align:right;font-size:10px;color:var(--text-dim);font-weight:600">Rate</th>
+            <th style="text-align:right;font-size:10px;color:var(--text-dim);font-weight:600">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="padding:6px 0;font-size:12px">Standard Pay</td>
+            <td style="text-align:right" class="mono">{{ '{:.2f}'.format(run.standard_hours) }}</td>
+            <td style="text-align:right" class="mono text-dim">${{ '{:.2f}'.format(run.standard_pay_rate) }}/hr</td>
+            <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(run.standard_pay) }}</td>
+          </tr>
+          {% if run.overtime_hours > 0 %}
+          <tr>
+            <td style="padding:6px 0;font-size:12px" class="text-yellow">Overtime Pay (1.5×)</td>
+            <td style="text-align:right" class="mono text-yellow">{{ '{:.2f}'.format(run.overtime_hours) }}</td>
+            <td style="text-align:right" class="mono text-dim">—</td>
+            <td style="text-align:right" class="mono text-yellow">${{ '{:,.2f}'.format(run.overtime_pay) }}</td>
+          </tr>
+          {% endif %}
+          {% if run.holiday_hours > 0 %}
+          <tr>
+            <td style="padding:6px 0;font-size:12px">Holiday Pay</td>
+            <td style="text-align:right" class="mono">{{ '{:.2f}'.format(run.holiday_hours) }}</td>
+            <td style="text-align:right" class="mono text-dim">—</td>
+            <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(run.holiday_pay) }}</td>
+          </tr>
+          {% endif %}
+          <tr style="border-top:2px solid var(--border);font-weight:700">
+            <td style="padding:8px 0;font-size:13px">Gross Pay</td>
+            <td style="text-align:right" class="mono">
+              {{ '{:.2f}'.format(run.standard_hours + run.overtime_hours + run.holiday_hours) }}
+            </td>
+            <td></td>
+            <td style="text-align:right" class="mono text-green" style="font-size:16px">
+              ${{ '{:,.2f}'.format(run.gross_pay) }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Deductions & Net -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">Deductions & Net Pay</span></div>
+    <div class="card-body">
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Employee Withholding</div>
+      {% for label, val in [
+          ('Social Security (6.2%)', run.ss_withheld),
+          ('Medicare (1.45%)', run.medicare_withheld),
+          ('Federal Income Tax', run.fed_withholding),
+          ('State Income Tax (IL)', run.state_withholding),
+      ] %}
+      <div class="flex" style="justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:12px">{{ label }}</span>
+        <span class="mono">${{ '{:,.2f}'.format(val) }}</span>
+      </div>
+      {% endfor %}
+      <div class="flex" style="justify-content:space-between;padding:6px 0;font-weight:600;font-size:12px">
+        <span>Total Deductions</span>
+        <span class="mono">${{ '{:,.2f}'.format(run.total_withheld) }}</span>
+      </div>
+      <div class="flex" style="justify-content:space-between;padding:10px 0;border-top:2px solid var(--border);font-weight:700">
+        <span style="font-size:14px">Net Pay</span>
+        <span class="mono text-accent" style="font-size:22px;font-weight:800">${{ '{:,.2f}'.format(run.net_pay) }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2" style="gap:16px;margin-bottom:16px">
+  <!-- Employer taxes -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">Employer Tax Liability</span></div>
+    <div class="card-body">
+      {% for label, val in [
+          ('SS Match (6.2%)', run.employer_ss),
+          ('Medicare Match (1.45%)', run.employer_medicare),
+          ('FUTA', run.futa_amount),
+          ('SUTA (IL)', run.suta_amount),
+      ] %}
+      <div class="flex" style="justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:12px">{{ label }}</span>
+        <span class="mono">${{ '{:,.2f}'.format(val) }}</span>
+      </div>
+      {% endfor %}
+      {% set er_total = run.employer_ss + run.employer_medicare + run.futa_amount + run.suta_amount %}
+      <div class="flex" style="justify-content:space-between;padding:8px 0;border-top:2px solid var(--border);font-weight:700">
+        <span>Total Employer Cost</span>
+        <span class="mono text-yellow">${{ '{:,.2f}'.format(run.gross_pay + er_total) }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- YTD summary -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">YTD Summary — {{ run.emp_name }} ({{ run.year }})</span>
+    </div>
+    <div class="card-body">
+      {% set ss_cap_pct = (ytd.ytd_gross / ss_cap * 100) if ss_cap > 0 else 0 %}
+      {% for label, val in [
+          ('YTD Gross Pay', ytd.ytd_gross),
+          ('YTD Net Pay', ytd.ytd_net),
+          ('YTD SS Withheld', ytd.ytd_ss),
+          ('YTD Medicare Withheld', ytd.ytd_medicare),
+          ('YTD Federal W/H', ytd.ytd_fed),
+          ('YTD State W/H', ytd.ytd_state),
+      ] %}
+      <div class="flex" style="justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span style="font-size:12px">{{ label }}</span>
+        <span class="mono">${{ '{:,.2f}'.format(val or 0) }}</span>
+      </div>
+      {% endfor %}
+      <!-- SS wage cap progress -->
+      <div style="margin-top:12px">
+        <div class="flex" style="justify-content:space-between;font-size:11px;color:var(--text-dim);margin-bottom:4px">
+          <span>SS Wage Base Progress (${{ '{:,.0f}'.format(ss_cap) }} cap)</span>
+          <span>{{ '{:.1f}'.format([ss_cap_pct, 100]|min) }}%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill {% if ss_cap_pct >= 100 %}green{% elif ss_cap_pct >= 80 %}yellow{% endif %}"
+               style="width:{{ '{:.0f}'.format([ss_cap_pct, 100]|min) }}%"></div>
+        </div>
+        {% if ytd.ytd_gross >= ss_cap %}
+          <div class="text-green" style="font-size:10px;margin-top:4px">✅ SS wage cap reached — no further SS on remaining wages</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Print-Ready Check Stub -->
+<div class="card no-print" style="margin-bottom:16px">
+  <div class="card-header"><span class="card-title">Check Stub Preview</span></div>
+  <div class="card-body">
+    <div class="check-stub" style="border:2px solid var(--border);padding:20px;border-radius:6px;max-width:600px;font-size:11px">
+      <div class="flex" style="justify-content:space-between;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-weight:700;font-size:14px">{{ config.company_name or 'Company' }}</div>
+          {% if config.address %}<div>{{ config.address }}</div>{% endif %}
+          {% if config.city_state_zip %}<div>{{ config.city_state_zip }}</div>{% endif %}
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:700;font-size:14px">CHECK STUB</div>
+          {% if run.check_number %}<div>Check #{{ run.check_number }}</div>{% endif %}
+          <div>{{ run.run_date }}</div>
+        </div>
+      </div>
+      <div class="grid-2" style="gap:16px;margin-bottom:12px">
+        <div>
+          <div style="font-weight:600">Pay To:</div>
+          <div>{{ run.emp_name }}</div>
+          {% if run.emp_address %}<div>{{ run.emp_address }}</div>{% endif %}
+          {% if run.emp_csz %}<div>{{ run.emp_csz }}</div>{% endif %}
+        </div>
+        <div>
+          <div>Period: {{ run.pay_period_start }} — {{ run.pay_period_end }}</div>
+          <div>Week {{ run.week_number }}, {{ run.year }}</div>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="background:#f5f5f5">
+          <td style="padding:4px 8px;font-weight:600">Earnings</td>
+          <td style="padding:4px 8px;text-align:right;font-weight:600">Hours</td>
+          <td style="padding:4px 8px;text-align:right;font-weight:600">Amount</td>
+          <td style="width:20px"></td>
+          <td style="padding:4px 8px;font-weight:600">Deductions</td>
+          <td style="padding:4px 8px;text-align:right;font-weight:600">Amount</td>
+        </tr>
+        <tr>
+          <td style="padding:3px 8px">Regular</td>
+          <td style="padding:3px 8px;text-align:right">{{ '{:.2f}'.format(run.standard_hours) }}</td>
+          <td style="padding:3px 8px;text-align:right">${{ '{:,.2f}'.format(run.standard_pay) }}</td>
+          <td></td>
+          <td style="padding:3px 8px">Fed Income Tax</td>
+          <td style="padding:3px 8px;text-align:right">${{ '{:,.2f}'.format(run.fed_withholding) }}</td>
+        </tr>
+        {% if run.overtime_hours > 0 %}
+        <tr>
+          <td style="padding:3px 8px">Overtime</td>
+          <td style="padding:3px 8px;text-align:right">{{ '{:.2f}'.format(run.overtime_hours) }}</td>
+          <td style="padding:3px 8px;text-align:right">${{ '{:,.2f}'.format(run.overtime_pay) }}</td>
+          <td></td>
+          <td style="padding:3px 8px">State Income Tax</td>
+          <td style="padding:3px 8px;text-align:right">${{ '{:,.2f}'.format(run.state_withholding) }}</td>
+        </tr>
+        {% endif %}
+        <tr>
+          <td colspan="2" style="padding:3px 8px;font-weight:700;border-top:1px solid #ccc">Gross Pay</td>
+          <td style="padding:3px 8px;text-align:right;font-weight:700;border-top:1px solid #ccc">${{ '{:,.2f}'.format(run.gross_pay) }}</td>
+          <td></td>
+          <td style="padding:3px 8px">Social Security</td>
+          <td style="padding:3px 8px;text-align:right">${{ '{:,.2f}'.format(run.ss_withheld) }}</td>
+        </tr>
+        <tr>
+          <td colspan="3"></td>
+          <td></td>
+          <td style="padding:3px 8px">Medicare</td>
+          <td style="padding:3px 8px;text-align:right">${{ '{:,.2f}'.format(run.medicare_withheld) }}</td>
+        </tr>
+        <tr>
+          <td colspan="3"></td>
+          <td></td>
+          <td style="padding:3px 8px;font-weight:700;border-top:1px solid #ccc">Total Deductions</td>
+          <td style="padding:3px 8px;text-align:right;font-weight:700;border-top:1px solid #ccc">${{ '{:,.2f}'.format(run.total_withheld) }}</td>
+        </tr>
+      </table>
+      <div class="flex" style="justify-content:flex-end;margin-top:12px;padding-top:12px;border-top:2px solid #333">
+        <div style="text-align:right">
+          <div style="font-size:10px;color:#888">NET PAY</div>
+          <div style="font-size:20px;font-weight:800">${{ '{:,.2f}'.format(run.net_pay) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mark Printed Modal -->
+<div class="modal-overlay" id="modal-print">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <h3>🖨 Mark Check Printed</h3>
+      <button class="modal-close" onclick="closeModal('modal-print')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Check Number</label>
+        <input type="text" id="check-num-input"
+               value="{{ run.check_number or '' }}"
+               placeholder="e.g. 1042">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-print')">Cancel</button>
+      <button class="btn btn-primary" onclick="markPrinted()">✅ Mark Printed</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function markPrinted() {
+  const checkNum = document.getElementById('check-num-input').value;
+  const res = await fetch('/payroll/{{ run.id }}/mark-printed', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({check_number: checkNum})
+  });
+  const d = await res.json();
+  if (d.success) {
+    showToast('Marked as printed', 'success');
+    closeModal('modal-print');
+    setTimeout(() => window.location.reload(), 600);
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}{% if mode=='new' %}New Job{% else %}Edit Job{% endif %} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}{% if mode=='new' %}New Job{% else %}Edit Job{% endif %}{% endblock %}
+{% block breadcrumb %}
+  <a href="/">Home</a> / <a href="/jobs">Jobs</a> /
+  {% if mode=='new' %}New{% else %}Edit: {{ job.job_code }}{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:680px">
+  <div class="card-header">
+    <span class="card-title">{% if mode=='new' %}➕ New Job{% else %}✏️ Edit Job: {{ job.job_code }}{% endif %}</span>
+  </div>
+  <div class="card-body">
+    <form method="POST" id="job-form">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Client
+            <span class="tip">Select to auto-suggest job code</span>
+          </label>
+          <select name="client_id" id="client-select">
+            <option value="">— No client —</option>
+            {% for c in clients %}
+            <option value="{{ c.id }}"
+                    {% if job.client_id == c.id or (request.args.get('client_id') | int) == c.id %}selected{% endif %}>
+              {{ c.full_name }} ({{ c.customer_id }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Job Code <span class="req">*</span>
+            <span class="tip">e.g. Smith-24, Johnson-25-2</span>
+          </label>
+          <div class="flex gap-8">
+            <input type="text" name="job_code" id="job-code"
+                   value="{{ job.job_code or '' }}"
+                   required placeholder="Smith-24">
+            <button type="button" class="btn btn-outline btn-sm" onclick="suggestCode()"
+                    title="Auto-suggest job code from client + year">⚡</button>
+          </div>
+          <div class="field-hint">Click ⚡ to auto-generate from client name + year</div>
+        </div>
+
+        <div class="form-group">
+          <label>Job Number</label>
+          <input type="number" name="job_number" value="{{ job.job_number or next_job_number }}"
+                 placeholder="{{ next_job_number }}">
+        </div>
+
+        <div class="form-group">
+          <label>Status</label>
+          <select name="status">
+            <option value="Active" {% if (job.status or 'Active')=='Active' %}selected{% endif %}>Active</option>
+            <option value="Bidding" {% if job.status=='Bidding' %}selected{% endif %}>Bidding</option>
+            <option value="Archived" {% if job.status=='Archived' %}selected{% endif %}>Archived</option>
+            <option value="Cancelled" {% if job.status=='Cancelled' %}selected{% endif %}>Cancelled</option>
+          </select>
+        </div>
+
+        <div class="form-group full">
+          <label>Description</label>
+          <input type="text" name="description" value="{{ job.description or '' }}"
+                 placeholder="Kitchen remodel, bathroom addition…">
+        </div>
+
+        <div class="form-group">
+          <label>Start Date</label>
+          <input type="date" name="start_date" value="{{ job.start_date or '' }}">
+        </div>
+
+        <div class="form-group">
+          <label>End Date / Target</label>
+          <input type="date" name="end_date" value="{{ job.end_date or '' }}">
+        </div>
+
+        <div class="form-group">
+          <label>Contract Amount</label>
+          <input type="number" step="0.01" name="contract_amount"
+                 value="{{ job.contract_amount or '' }}"
+                 placeholder="0.00" data-type="currency">
+        </div>
+
+        <div class="form-group">
+          <label>Budget Amount <span style="font-size:10px;color:var(--text-dim)">(internal cost target)</span></label>
+          <input type="number" step="0.01" name="budget_amount"
+                 value="{{ job.budget_amount or '' }}"
+                 placeholder="0.00" data-type="currency">
+        </div>
+
+        <div class="form-group full">
+          <label>Notes <span style="font-size:10px;color:var(--text-dim)">(client-visible)</span></label>
+          <textarea name="notes" rows="3" placeholder="Any notes about this job…">{{ job.notes or '' }}</textarea>
+        </div>
+
+        <div class="form-group full">
+          <label>Internal Notes <span style="font-size:10px;color:var(--text-dim)">(private)</span></label>
+          <textarea name="notes_internal" rows="2" placeholder="Internal-only notes (not included in PDFs or exports)…">{{ job.notes_internal or '' }}</textarea>
+        </div>
+      </div>
+
+      <hr class="dim">
+      <div class="flex gap-8">
+        <button type="submit" class="btn btn-primary">💾 Save Job</button>
+        <a href="/jobs" class="btn btn-outline">Cancel</a>
+        {% if mode=='edit' %}
+        <form method="POST" action="/jobs/{{ job.id }}/delete" style="margin-left:auto"
+              onsubmit="return confirm('Archive job {{ job.job_code }}?')">
+          <button type="submit" class="btn btn-danger btn-sm">Archive Job</button>
+        </form>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const clientSelect = document.getElementById('client-select');
+const jobCodeInput = document.getElementById('job-code');
+const currentYear = {{ year }};
+
+function suggestCode() {
+  const clientId = clientSelect.value;
+  if (!clientId) { showToast('Select a client first', 'error'); return; }
+  fetch(`/api/jobs/suggest-code?client_id=${clientId}&year=${currentYear}`)
+    .then(r => r.json())
+    .then(d => {
+      if (d.code) {
+        jobCodeInput.value = d.code;
+        jobCodeInput.focus();
+      }
+    });
+}
+
+// Auto-suggest on client change if job code is empty
+clientSelect.addEventListener('change', () => {
+  if (!jobCodeInput.value) suggestCode();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); document.getElementById('job-form').submit(); }
+});
+
+// Pre-select client from URL param
+const urlClientId = '{{ request.args.get("client_id", "") }}';
+if (urlClientId && !jobCodeInput.value) {
+  setTimeout(suggestCode, 100);
+}
+</script>
+{% endblock %}

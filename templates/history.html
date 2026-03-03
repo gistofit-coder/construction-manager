@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Change History — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}🕓 Change History{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Change History{% endblock %}
+
+{% block content %}
+
+<!-- ── Filters ── -->
+<div class="card" style="margin-bottom:14px">
+  <div class="card-body" style="padding:10px 14px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:center">
+      <select name="table" onchange="this.form.submit()" style="min-width:160px">
+        <option value="">All Tables</option>
+        {% for t in tables %}
+        <option value="{{ t }}" {% if t == table_f %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+      <select name="action" onchange="this.form.submit()" style="min-width:120px">
+        <option value="">All Actions</option>
+        {% for a in ['INSERT','UPDATE','DELETE'] %}
+        <option value="{{ a }}" {% if a == action_f %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+      {% if table_f or action_f %}
+      <a href="/history" class="btn btn-outline btn-sm">✕ Clear</a>
+      {% endif %}
+      <div class="text-dim" style="margin-left:auto;font-size:12px">
+        {{ total }} entr{{ 'y' if total == 1 else 'ies' }} | Last 500 changes kept
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Legend ── -->
+<div class="flex gap-8" style="margin-bottom:10px;font-size:11px;color:var(--text-dim);flex-wrap:wrap">
+  <span><span class="badge badge-green" style="font-size:10px">INSERT</span> — Created</span>
+  <span><span class="badge badge-blue" style="font-size:10px">UPDATE</span> — Edited</span>
+  <span><span class="badge badge-red" style="font-size:10px">DELETE</span> — Deleted</span>
+  <span style="margin-left:8px">⏪ Revert restores the record to its state before that change.</span>
+</div>
+
+<!-- ── History Table ── -->
+<div class="card">
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:60px">#</th>
+          <th style="width:150px">When</th>
+          <th style="width:110px">Table</th>
+          <th style="width:70px">Action</th>
+          <th>Summary</th>
+          <th style="width:130px">Changes</th>
+          <th style="width:80px">Revert</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+        <tr id="hist-row-{{ e.id }}"
+            class="{% if e.action == 'DELETE' %}row-overdue{% elif e.action == 'INSERT' %}row-success{% endif %}">
+          <td class="mono text-dim" style="font-size:10px">{{ e.id }}</td>
+          <td class="mono text-dim" style="font-size:11px">{{ e.action_time }}</td>
+          <td><code style="font-size:11px">{{ e.table_name }}</code></td>
+          <td>
+            {% if e.action == 'INSERT' %}
+              <span class="badge badge-green">INSERT</span>
+            {% elif e.action == 'UPDATE' %}
+              <span class="badge badge-blue">UPDATE</span>
+            {% else %}
+              <span class="badge badge-red">DELETE</span>
+            {% endif %}
+          </td>
+          <td style="font-size:12px">{{ e.summary }}</td>
+          <td>
+            {% set old = e.old_data %}
+            {% set new = e.new_data %}
+            {% if e.action == 'UPDATE' and old and new %}
+            <button class="btn btn-outline btn-xs"
+                    onclick="showDiff({{ e.id }}, {{ old|tojson }}, {{ new|tojson }})">
+              🔍 View diff
+            </button>
+            {% elif e.action == 'DELETE' and old %}
+            <button class="btn btn-outline btn-xs"
+                    onclick="showDiff({{ e.id }}, {{ old|tojson }}, {})">
+              🔍 View
+            </button>
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if e.action in ('DELETE', 'UPDATE') and e.old_data %}
+            <button class="btn btn-outline btn-xs" id="revert-btn-{{ e.id }}"
+                    onclick="revert({{ e.id }}, '{{ e.action }}', '{{ e.table_name }}')"
+                    title="Restore this record to its state before this change">
+              ⏪ Revert
+            </button>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" style="text-align:center;padding:40px" class="text-dim">
+            No history entries found.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Pagination -->
+{% if pages > 1 %}
+<div class="flex gap-8" style="margin-top:14px;justify-content:center;align-items:center">
+  {% if page > 1 %}
+  <a href="?page={{ page-1 }}&table={{ table_f }}&action={{ action_f }}" class="btn btn-outline btn-sm">← Prev</a>
+  {% endif %}
+  <span class="text-dim" style="font-size:12px">Page {{ page }} of {{ pages }}</span>
+  {% if page < pages %}
+  <a href="?page={{ page+1 }}&table={{ table_f }}&action={{ action_f }}" class="btn btn-outline btn-sm">Next →</a>
+  {% endif %}
+</div>
+{% endif %}
+
+
+<!-- ── Diff Modal ── -->
+<div class="modal-overlay" id="diffModal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header">
+      <h3>🔍 Change Details</h3>
+      <button class="modal-close" onclick="closeModal('diffModal')">✕</button>
+    </div>
+    <div class="modal-body" id="diffContent" style="font-size:12px;max-height:420px;overflow-y:auto">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('diffModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Revert Confirm Modal ── -->
+<div class="modal-overlay" id="revertModal">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3>⏪ Confirm Revert</h3>
+      <button class="modal-close" onclick="closeModal('revertModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;margin-bottom:12px">
+        This will restore the record to its state <strong>before</strong> this change.
+        The current state will be saved to history so you can undo this revert too.
+      </p>
+      <p id="revertDescription" class="text-dim" style="font-size:12px;border:1px solid var(--border);padding:8px;border-radius:4px"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('revertModal')">Cancel</button>
+      <button class="btn btn-primary" id="revertConfirmBtn" onclick="confirmRevert()">⏪ Yes, Revert</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let pendingRevertId = null;
+
+function showDiff(id, oldData, newData) {
+  const container = document.getElementById('diffContent');
+  const allKeys   = new Set([...Object.keys(oldData || {}), ...Object.keys(newData || {})]);
+  const skip      = new Set(['updated_at', 'created_at']);
+
+  let html = '<table style="width:100%;border-collapse:collapse">';
+  html += '<tr style="background:var(--bg)"><th style="padding:4px 8px;text-align:left;font-size:11px;color:var(--text-dim)">Field</th><th style="padding:4px 8px;text-align:left;font-size:11px;color:var(--text-dim)">Before</th><th style="padding:4px 8px;text-align:left;font-size:11px;color:var(--text-dim)">After</th></tr>';
+
+  for (const key of [...allKeys].sort()) {
+    if (skip.has(key)) continue;
+    const ov = oldData?.[key];
+    const nv = newData?.[key];
+    const changed = JSON.stringify(ov) !== JSON.stringify(nv);
+    const bg = changed ? 'background:rgba(255,200,0,0.07)' : '';
+
+    html += `<tr style="${bg};border-bottom:1px solid var(--border)">
+      <td style="padding:4px 8px;font-weight:${changed?'700':'400'};font-size:11px">${key}</td>
+      <td style="padding:4px 8px;color:var(--red);font-size:11px;font-family:monospace">${ov != null ? ov : '—'}</td>
+      <td style="padding:4px 8px;color:var(--green);font-size:11px;font-family:monospace">${nv != null ? nv : '—'}</td>
+    </tr>`;
+  }
+  html += '</table>';
+  container.innerHTML = html;
+  openModal('diffModal');
+}
+
+function revert(id, action, table) {
+  pendingRevertId = id;
+  document.getElementById('revertDescription').textContent =
+    `Reverting ${action} on table "${table}" (log #${id})`;
+  openModal('revertModal');
+}
+
+async function confirmRevert() {
+  if (!pendingRevertId) return;
+  const btn = document.getElementById('revertConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Reverting…';
+
+  const r = await fetch(`/api/history/${pendingRevertId}/revert`, {method:'POST'});
+  const d = await r.json();
+
+  closeModal('revertModal');
+  if (d.success) {
+    const row = document.getElementById(`hist-row-${pendingRevertId}`);
+    if (row) {
+      row.style.opacity = '0.4';
+      const revertBtn = document.getElementById(`revert-btn-${pendingRevertId}`);
+      if (revertBtn) { revertBtn.disabled = true; revertBtn.textContent = '✅ Reverted'; }
+    }
+    showToast('Record reverted successfully!', 'success');
+  } else {
+    showToast(d.error || 'Revert failed', 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = '⏪ Yes, Revert';
+  pendingRevertId = null;
+}
+</script>
+{% endblock %}

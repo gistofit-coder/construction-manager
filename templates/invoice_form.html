@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}{% if invoice %}Edit Invoice #{{ invoice.invoice_number }}{% else %}New Invoice{% endif %} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}🧾 {% if invoice %}Edit Invoice{% else %}New Invoice{% endif %}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/invoices">Invoices</a> / {% if invoice %}Edit #{{ invoice.invoice_number }}{% else %}New{% endif %}{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:720px">
+  <div class="card-header">
+    <span class="card-title">{% if invoice %}Edit Invoice #{{ invoice.invoice_number }}{% else %}New Invoice{% endif %}</span>
+  </div>
+  <div class="card-body">
+    <form method="POST" action="{% if invoice %}/invoices/{{ invoice.id }}/edit{% else %}/invoices/new{% endif %}"
+          class="form-grid" id="invoice-form">
+
+      <div class="form-group">
+        <label>Invoice # <span class="req">*</span></label>
+        <input type="number" name="invoice_number"
+               value="{{ invoice.invoice_number if invoice else next_num }}"
+               {% if invoice %}readonly{% endif %} style="font-family:monospace;font-weight:700">
+        {% if not invoice %}
+        <div class="field-hint">Auto-assigned next number: {{ next_num }}</div>
+        {% endif %}
+      </div>
+
+      <div class="form-group">
+        <label>Invoice Date <span class="req">*</span></label>
+        <input type="date" name="invoice_date"
+               value="{{ invoice.invoice_date if invoice else today }}" required>
+      </div>
+
+      <div class="form-group">
+        <label>Due Date</label>
+        <input type="date" name="due_date" id="due-date"
+               value="{{ invoice.due_date if invoice else due }}"
+               placeholder="Auto: invoice date + 30 days">
+        <div class="field-hint">Leave blank to auto-compute (invoice date + 30 days)</div>
+      </div>
+
+      <div class="form-group">
+        <label>Client</label>
+        <select name="client_id" id="client-select">
+          <option value="">— select client —</option>
+          {% for c in clients %}
+          <option value="{{ c.id }}"
+                  data-jobs="{{ c.id }}"
+                  {% if (invoice and invoice.client_id==c.id) or prefill_client==c.id|string %}selected{% endif %}>
+            {{ c.full_name }} ({{ c.customer_id }})
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Job Code</label>
+        <select name="job_code" id="job-select">
+          <option value="">— select job —</option>
+          {% for j in all_jobs %}
+          <option value="{{ j.job_code }}"
+                  data-client="{{ j.client_id }}"
+                  {% if (invoice and invoice.job_code==j.job_code) or prefill_job==j.job_code %}selected{% endif %}>
+            {{ j.job_code }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group full">
+        <label>Description of Work <span class="req">*</span></label>
+        <textarea name="description_of_work" rows="3" placeholder="Work completed for this invoice…">{{ invoice.description_of_work if invoice else '' }}</textarea>
+      </div>
+
+      <div class="form-group">
+        <label>Amount <span class="req">*</span></label>
+        <input type="number" name="amount" step="0.01" min="0"
+               value="{{ '{:.2f}'.format(invoice.amount) if invoice else '' }}"
+               placeholder="0.00" required id="amount-input"
+               oninput="updateBalance()">
+      </div>
+
+      <div class="form-group">
+        <label>Price Adjustment
+          <span class="tip">Negative = credit/rebate, Positive = surcharge</span>
+        </label>
+        <input type="number" name="adjustment_amount" step="0.01"
+               value="{{ '{:.2f}'.format(invoice.adjustment_amount) if invoice and invoice.adjustment_amount else '0.00' }}"
+               placeholder="0.00" id="adj-input"
+               oninput="updateBalance()">
+      </div>
+      <div class="form-group">
+        <label>Adjustment Note</label>
+        <input type="text" name="adjustment_note"
+               value="{{ invoice.adjustment_note if invoice else '' }}"
+               placeholder="e.g. Loyalty discount, Material credit, Change order…">
+      </div>
+      <div class="form-group">
+        <label>Amount Paid</label>
+        <input type="number" name="amount_paid" step="0.01" min="0"
+               value="{{ '{:.2f}'.format(invoice.amount_paid) if invoice else '0.00' }}"
+               placeholder="0.00" id="paid-input"
+               oninput="updateBalance()">
+      </div>
+
+      <div class="form-group">
+        <label>Balance Due</label>
+        <div class="mono" id="balance-display" style="padding:7px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-weight:700;font-size:14px">
+          ${{ '{:,.2f}'.format(invoice.balance_due) if invoice else '0.00' }}
+        </div>
+      </div>
+
+      <div class="form-group full">
+        <label>Notes</label>
+        <textarea name="notes" rows="2" placeholder="Internal notes…">{{ invoice.notes if invoice else '' }}</textarea>
+      </div>
+
+      <div class="form-group full flex gap-8" style="margin-top:8px">
+        <button type="submit" class="btn btn-primary">
+          {% if invoice %}💾 Save Changes{% else %}➕ Create Invoice{% endif %}
+        </button>
+        <a href="{% if invoice %}/invoices/{{ invoice.id }}{% else %}/invoices{% endif %}" class="btn btn-outline">Cancel</a>
+        {% if invoice %}
+          <button type="button" class="btn btn-danger" style="margin-left:auto"
+                  onclick="if(confirm('Delete this invoice? You can undo.')) { fetch('/invoices/{{ invoice.id }}/delete', {method:'POST'}).then(()=>window.location='/invoices'); }">
+            🗑 Delete
+          </button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function updateBalance() {
+  const amt  = parseFloat(document.getElementById('amount-input')?.value || 0);
+  const adj  = parseFloat(document.getElementById('adj-input')?.value || 0);
+  const paid = parseFloat(document.getElementById('paid-input')?.value || 0);
+  const bal  = Math.max(0, amt - paid);
+  const el   = document.getElementById('balance-display');
+  if (el) {
+    el.textContent = '$' + bal.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    el.style.color = bal > 0 ? 'var(--yellow)' : 'var(--green)';
+  }
+}
+updateBalance();
+
+// Ctrl+S to save
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 's') {
+    e.preventDefault();
+    document.getElementById('invoice-form')?.submit();
+  }
+});
+</script>
+{% endblock %}

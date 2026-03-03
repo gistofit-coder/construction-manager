@@ -1,0 +1,27 @@
+# Database
+construction.db
+*.db
+*.sqlite3
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Backups & large files
+*.zip
+backups/
+*.bak
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+temp/

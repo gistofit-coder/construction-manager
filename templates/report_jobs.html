@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Job Profitability — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}🏗️ Job Profitability{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reports">Reports</a> / Job Profitability{% endblock %}
+
+{% block content %}
+<div class="flex gap-8" style="margin-bottom:16px;align-items:center;flex-wrap:wrap">
+  <h2 style="font-size:18px;font-weight:700">Job Profitability</h2>
+  <form method="GET" class="flex gap-8" style="margin-left:auto;align-items:center">
+    <select name="status" onchange="this.form.submit()" style="min-width:110px">
+      <option value="">All Status</option>
+      {% for s in ['Active','Bidding','Archived','Cancelled'] %}
+      <option value="{{ s }}" {% if s == status_f %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print</button>
+  </form>
+</div>
+
+<!-- Summary Tiles -->
+<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+  <div class="kpi-tile green"><div class="kpi-label">Total Revenue</div><div class="kpi-value">${{ '{:,.0f}'.format(total_rev) }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">Total Cost</div><div class="kpi-value">${{ '{:,.0f}'.format(total_cost) }}</div></div>
+  <div class="kpi-tile {% if total_profit >= 0 %}green{% else %}red{% endif %}">
+    <div class="kpi-label">Total Profit</div>
+    <div class="kpi-value {% if total_profit >= 0 %}text-green{% else %}text-red{% endif %}">${{ '{:,.0f}'.format(total_profit) }}</div>
+  </div>
+  <div class="kpi-tile {% if total_margin >= 0 %}green{% else %}red{% endif %}">
+    <div class="kpi-label">Avg Margin</div>
+    <div class="kpi-value {% if total_margin >= 0 %}text-green{% else %}text-red{% endif %}">{{ total_margin }}%</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body no-pad">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Job Code</th>
+            <th>Description</th>
+            <th>Client</th>
+            <th style="width:70px">Status</th>
+            <th style="text-align:right;width:100px">Estimated</th>
+            <th style="text-align:right;width:100px">Revenue</th>
+            <th style="text-align:right;width:90px">COGS</th>
+            <th style="text-align:right;width:90px">Labor</th>
+            <th style="text-align:right;width:90px">Total Cost</th>
+            <th style="text-align:right;width:90px">Profit</th>
+            <th style="text-align:right;width:70px">Margin</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for j in jobs %}
+          <tr>
+            <td>
+              <a href="/reports/jobs?status={{ status_f }}" class="mono" style="font-size:11px;font-weight:600">{{ j.job_code }}</a>
+            </td>
+            <td style="font-size:11px">{{ (j.description or '')[:35] }}</td>
+            <td class="text-dim" style="font-size:11px">{{ (j.client or '')[:20] }}</td>
+            <td>
+              {% set sc = {'Active':'green','Bidding':'blue','Archived':'gray','Cancelled':'red'} %}
+              <span class="badge badge-{{ sc.get(j.status,'gray') }}" style="font-size:9px">{{ j.status }}</span>
+            </td>
+            <td style="text-align:right" class="mono text-dim">${{ '{:,.0f}'.format(j.estimated) if j.estimated else '—' }}</td>
+            <td style="text-align:right;font-weight:600" class="mono {% if j.revenue %}text-green{% else %}text-dim{% endif %}">${{ '{:,.0f}'.format(j.revenue) }}</td>
+            <td style="text-align:right" class="mono">${{ '{:,.0f}'.format(j.cogs) }}</td>
+            <td style="text-align:right" class="mono">${{ '{:,.0f}'.format(j.labor) }}</td>
+            <td style="text-align:right" class="mono">${{ '{:,.0f}'.format(j.total_cost) }}</td>
+            <td style="text-align:right;font-weight:700" class="mono {% if j.profit > 0 %}text-green{% elif j.profit < 0 %}text-red{% else %}text-dim{% endif %}">
+              {% if j.profit > 0 %}+{% endif %}${{ '{:,.0f}'.format(j.profit) }}
+            </td>
+            <td style="text-align:right" class="{% if j.margin > 20 %}text-green{% elif j.margin < 0 %}text-red{% elif j.margin < 10 %}text-yellow{% endif %}">
+              {{ j.margin }}%
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="11" class="text-dim" style="text-align:center;padding:30px">No jobs found.</td></tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr style="font-weight:800;background:var(--bg)">
+            <td colspan="5">TOTALS</td>
+            <td style="text-align:right" class="mono text-green">${{ '{:,.0f}'.format(total_rev) }}</td>
+            <td colspan="2"></td>
+            <td style="text-align:right" class="mono">${{ '{:,.0f}'.format(total_cost) }}</td>
+            <td style="text-align:right" class="mono {% if total_profit >= 0 %}text-green{% else %}text-red{% endif %}">${{ '{:,.0f}'.format(total_profit) }}</td>
+            <td style="text-align:right" class="{% if total_margin >= 0 %}text-green{% else %}text-red{% endif %}">{{ total_margin }}%</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

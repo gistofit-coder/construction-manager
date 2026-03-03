@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+{% block title %}Quick Quote — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}🧮 Quick Quote{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Quick Quote{% endblock %}
+
+{% block content %}
+<div style="max-width:960px">
+
+  <!-- Mode Toggle -->
+  <div class="flex gap-8" style="margin-bottom:16px;align-items:center;flex-wrap:wrap">
+    <h2 style="font-size:18px;font-weight:700">Quick Quote Calculator</h2>
+    <div class="tabs" style="margin-bottom:0;border-bottom:none;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;padding:3px;margin-left:auto">
+      <a class="tab active" id="tab-buildup" onclick="switchMode('buildUp',event)">📊 Build Up</a>
+      <a class="tab"        id="tab-topdown" onclick="switchMode('topDown',event)">💰 Top Down</a>
+    </div>
+  </div>
+
+  <div class="grid-2" style="gap:16px;align-items:start">
+
+    <!-- ── LEFT: Inputs ── -->
+    <div>
+
+      <!-- Build-Up Mode -->
+      <div id="panel-buildUp">
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-header"><span class="card-title">📊 Direct Costs (Build Up)</span></div>
+          <div class="card-body">
+            <div class="form-grid form-grid-2">
+              <div class="form-group">
+                <label>Labor</label>
+                <div style="position:relative">
+                  <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim)">$</span>
+                  <input type="number" id="labor" placeholder="0.00" min="0" step="0.01"
+                         style="padding-left:22px" oninput="calc()" value="0">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Materials</label>
+                <div style="position:relative">
+                  <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim)">$</span>
+                  <input type="number" id="materials" placeholder="0.00" min="0" step="0.01"
+                         style="padding-left:22px" oninput="calc()" value="0">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Subcontractors</label>
+                <div style="position:relative">
+                  <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim)">$</span>
+                  <input type="number" id="subs" placeholder="0.00" min="0" step="0.01"
+                         style="padding-left:22px" oninput="calc()" value="0">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Other</label>
+                <div style="position:relative">
+                  <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim)">$</span>
+                  <input type="number" id="other" placeholder="0.00" min="0" step="0.01"
+                         style="padding-left:22px" oninput="calc()" value="0">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top-Down Mode -->
+      <div id="panel-topDown" style="display:none">
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-header"><span class="card-title">💰 Target Sell Price (Top Down)</span></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label>Desired Sell Price</label>
+              <div style="position:relative">
+                <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim);font-size:14px">$</span>
+                <input type="number" id="sell_price_input" placeholder="e.g. 25000" min="0" step="100"
+                       style="padding-left:22px;font-size:18px;font-weight:700" oninput="calc()" value="">
+              </div>
+              <div class="field-hint">Enter your target price — we'll back-calculate how much you can spend on direct costs.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Rate Sliders ── -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">⚙️ Overhead & Profit Rates</span></div>
+        <div class="card-body">
+          {% for id, label, default in [
+            ('overhead_pct',    'Overhead',    default_overhead),
+            ('insurance_pct',   'Insurance',   default_insurance),
+            ('owner_wages_pct', 'Owner Wages', default_owner_wages),
+            ('profit_pct',      'Profit',      default_profit),
+          ] %}
+          <div style="margin-bottom:14px">
+            <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+              <label style="margin:0;text-transform:none;font-size:12px;color:var(--text)">{{ label }}</label>
+              <div style="display:flex;align-items:center;gap:6px">
+                <input type="number" id="{{ id }}" value="{{ default }}" min="0" max="99" step="0.5"
+                       style="width:60px;text-align:right;padding:3px 6px;font-size:12px"
+                       oninput="syncSlider('{{ id }}');calc()">
+                <span style="font-size:12px;color:var(--text-dim)">%</span>
+              </div>
+            </div>
+            <input type="range" id="{{ id }}_slider"
+                   min="0" max="40" step="0.5" value="{{ default }}"
+                   style="width:100%;accent-color:var(--accent)"
+                   oninput="syncInput('{{ id }}');calc()">
+          </div>
+          {% endfor %}
+          <div style="border-top:1px solid var(--border);padding-top:10px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-dim)">
+            <span>Total add-ons: <strong id="total_pct_display" style="color:var(--text)">0%</strong></span>
+            <button class="btn btn-outline btn-xs" onclick="resetRates()">↺ Reset to Defaults</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── RIGHT: Results ── -->
+    <div>
+      <div class="card" style="position:sticky;top:64px">
+        <div class="card-header">
+          <span class="card-title">💵 Quote Breakdown</span>
+          <div class="card-actions">
+            <button class="btn btn-outline btn-xs" onclick="window.print()">🖨 Print</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0">
+
+          <!-- Price display -->
+          <div style="padding:20px 20px 14px;text-align:center;border-bottom:1px solid var(--border)">
+            <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Suggested Price</div>
+            <div id="result_price" style="font-size:40px;font-weight:900;color:var(--green);letter-spacing:-1px">$0.00</div>
+            <div id="result_margin" style="font-size:13px;color:var(--text-dim);margin-top:4px">—</div>
+          </div>
+
+          <!-- Breakdown rows -->
+          <div style="padding:14px 20px">
+            {% for rid, label, color, indent in [
+              ('direct_costs',    'Direct Costs',       '',              False),
+              ('overhead_amt',    'Overhead',           'text-dim',      True),
+              ('insurance_amt',   'Insurance',          'text-dim',      True),
+              ('owner_wages_amt', 'Owner Wages',        'text-dim',      True),
+              ('subtotal',        'Subtotal w/ Burden', 'text-bright',   False),
+              ('profit_amt',      'Profit',             'text-dim',      True),
+              ('sell_price',      'Total Price',        'text-green',    False),
+            ] %}
+            <div class="flex" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);{% if not loop.last %}{% endif %}">
+              <span class="{{ color }}" style="font-size:12px;{% if indent %}padding-left:12px;{% endif %}{% if rid in ('subtotal','sell_price') %}font-weight:700;{% endif %}">
+                {% if indent %}└ {% endif %}{{ label }}
+              </span>
+              <span class="mono {{ color }}" style="{% if rid in ('subtotal','sell_price') %}font-weight:700;{% endif %}font-size:12px"
+                    id="res_{{ rid }}">—</span>
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- Visual bar -->
+          <div style="padding:12px 20px;border-top:1px solid var(--border)">
+            <div class="text-dim" style="font-size:10px;text-transform:uppercase;margin-bottom:6px">Cost Composition</div>
+            <div style="display:flex;height:14px;border-radius:4px;overflow:hidden;gap:1px" id="cost_bar">
+              <div id="bar_labor"     style="background:#3d85f5;transition:flex 0.3s" title="Labor"></div>
+              <div id="bar_materials" style="background:#2ecc71;transition:flex 0.3s" title="Materials"></div>
+              <div id="bar_subs"      style="background:#f0c040;transition:flex 0.3s" title="Subs"></div>
+              <div id="bar_other"     style="background:#e67e22;transition:flex 0.3s" title="Other"></div>
+              <div id="bar_overhead"  style="background:#9b59b6;transition:flex 0.3s" title="Overhead/Ins/OW"></div>
+              <div id="bar_profit"    style="background:#27ae60;transition:flex 0.3s" title="Profit"></div>
+            </div>
+            <div class="flex gap-8" style="margin-top:6px;font-size:9px;color:var(--text-dim);flex-wrap:wrap">
+              <span style="color:#3d85f5">■ Labor</span>
+              <span style="color:#2ecc71">■ Materials</span>
+              <span style="color:#f0c040">■ Subs</span>
+              <span style="color:#e67e22">■ Other</span>
+              <span style="color:#9b59b6">■ Overhead</span>
+              <span style="color:#27ae60">■ Profit</span>
+            </div>
+          </div>
+
+          <!-- Save as Estimate -->
+          <div style="padding:14px 20px;border-top:1px solid var(--border)">
+            <div class="text-dim" style="font-size:11px;margin-bottom:10px;font-weight:500">Save as Draft Estimate</div>
+            <div class="form-grid form-grid-2" style="gap:8px;margin-bottom:10px">
+              <div class="form-group">
+                <label>Quote Name</label>
+                <input type="text" id="quote_name" placeholder="e.g. Kitchen Remodel Bid">
+              </div>
+              <div class="form-group">
+                <label>Job (optional)</label>
+                <select id="quote_job_id">
+                  <option value="">— No job —</option>
+                  {% for j in jobs %}
+                  <option value="{{ j.id }}">{{ j.job_code }}{% if j.description %} – {{ j.description[:20] }}{% endif %}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Client (optional)</label>
+                <select id="quote_client_id">
+                  <option value="">— No client —</option>
+                  {% for c in clients %}
+                  <option value="{{ c.id }}">{{ c.full_name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Notes</label>
+                <input type="text" id="quote_notes" placeholder="Additional notes…">
+              </div>
+            </div>
+            <button class="btn btn-primary" style="width:100%" onclick="saveAsEstimate()" id="saveBtn" disabled>
+              📋 Save as Draft Estimate
+            </button>
+            <div id="saveResult" style="margin-top:8px;font-size:12px;text-align:center"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DEFAULTS = {
+  overhead_pct:    {{ default_overhead }},
+  insurance_pct:   {{ default_insurance }},
+  owner_wages_pct: {{ default_owner_wages }},
+  profit_pct:      {{ default_profit }},
+};
+
+let currentMode   = 'buildUp';
+let lastResult    = null;
+let calcTimeout   = null;
+
+// ─── Mode Switch ───────────────────────────────────────────────
+function switchMode(mode, e) {
+  currentMode = mode;
+  document.getElementById('panel-buildUp').style.display = mode === 'buildUp' ? '' : 'none';
+  document.getElementById('panel-topDown').style.display = mode === 'topDown' ? '' : 'none';
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  (e?.target || document.getElementById(`tab-${mode}`)).classList.add('active');
+  calc();
+}
+
+// ─── Slider ↔ Input sync ──────────────────────────────────────
+function syncSlider(id) {
+  document.getElementById(id + '_slider').value = document.getElementById(id).value;
+  updateTotalPct();
+}
+function syncInput(id) {
+  document.getElementById(id).value = document.getElementById(id + '_slider').value;
+  updateTotalPct();
+}
+function updateTotalPct() {
+  const total = ['overhead_pct','insurance_pct','owner_wages_pct','profit_pct']
+    .reduce((s,k) => s + (parseFloat(document.getElementById(k).value) || 0), 0);
+  document.getElementById('total_pct_display').textContent = total.toFixed(1) + '%';
+}
+function resetRates() {
+  for (const [k,v] of Object.entries(DEFAULTS)) {
+    document.getElementById(k).value = v;
+    document.getElementById(k + '_slider').value = v;
+  }
+  updateTotalPct();
+  calc();
+}
+
+// ─── Main Calculate ───────────────────────────────────────────
+function calc() {
+  clearTimeout(calcTimeout);
+  calcTimeout = setTimeout(doCalc, 120);
+}
+
+async function doCalc() {
+  const pcts = {
+    overhead_pct:    parseFloat(document.getElementById('overhead_pct').value)    || 0,
+    insurance_pct:   parseFloat(document.getElementById('insurance_pct').value)   || 0,
+    owner_wages_pct: parseFloat(document.getElementById('owner_wages_pct').value) || 0,
+    profit_pct:      parseFloat(document.getElementById('profit_pct').value)      || 0,
+  };
+
+  let payload;
+  if (currentMode === 'buildUp') {
+    payload = {
+      mode: 'buildUp',
+      labor:     parseFloat(document.getElementById('labor').value)     || 0,
+      materials: parseFloat(document.getElementById('materials').value) || 0,
+      subs:      parseFloat(document.getElementById('subs').value)      || 0,
+      other:     parseFloat(document.getElementById('other').value)     || 0,
+      ...pcts,
+    };
+  } else {
+    const sp = parseFloat(document.getElementById('sell_price_input').value) || 0;
+    if (!sp) { clearResults(); return; }
+    payload = { mode: 'topDown', sell_price: sp, ...pcts };
+  }
+
+  try {
+    const r = await fetch('/api/quick-quote/calculate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (d.error) { clearResults(); return; }
+    lastResult = {...d, ...pcts};
+    renderResults(d, payload);
+  } catch(e) {
+    clearResults();
+  }
+}
+
+function fmt(n) {
+  return '$' + (parseFloat(n) || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function renderResults(d, payload) {
+  const sp = d.sell_price || 0;
+  document.getElementById('result_price').textContent = fmt(sp);
+  document.getElementById('result_margin').textContent =
+    d.margin != null ? `${d.margin}% gross margin` : '';
+
+  const map = {
+    direct_costs:    d.direct,
+    overhead_amt:    d.overhead_amt,
+    insurance_amt:   d.insurance_amt,
+    owner_wages_amt: d.owner_wages_amt,
+    subtotal:        d.subtotal || (d.direct + d.overhead_amt + d.insurance_amt + d.owner_wages_amt),
+    profit_amt:      d.profit_amt,
+    sell_price:      sp,
+  };
+  for (const [k,v] of Object.entries(map)) {
+    const el = document.getElementById('res_' + k);
+    if (el) el.textContent = fmt(v);
+  }
+
+  // Composition bar
+  const labor     = parseFloat(payload.labor     || d.direct || 0);
+  const materials = parseFloat(payload.materials || 0);
+  const subs      = parseFloat(payload.subs      || 0);
+  const other_    = parseFloat(payload.other     || 0);
+  const overhead  = d.overhead_amt + d.insurance_amt + d.owner_wages_amt;
+  const profit    = d.profit_amt;
+  const total     = sp || 1;
+
+  document.getElementById('bar_labor').style.flex     = labor / total;
+  document.getElementById('bar_materials').style.flex = materials / total;
+  document.getElementById('bar_subs').style.flex      = subs / total;
+  document.getElementById('bar_other').style.flex     = other_ / total;
+  document.getElementById('bar_overhead').style.flex  = overhead / total;
+  document.getElementById('bar_profit').style.flex    = profit / total;
+
+  document.getElementById('saveBtn').disabled = !sp;
+}
+
+function clearResults() {
+  lastResult = null;
+  document.getElementById('result_price').textContent = '$0.00';
+  document.getElementById('result_margin').textContent = '—';
+  ['direct_costs','overhead_amt','insurance_amt','owner_wages_amt','subtotal','profit_amt','sell_price']
+    .forEach(k => { const el = document.getElementById('res_' + k); if(el) el.textContent = '—'; });
+  document.getElementById('saveBtn').disabled = true;
+}
+
+// ─── Save as Estimate ─────────────────────────────────────────
+async function saveAsEstimate() {
+  if (!lastResult) return;
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  const payload = {
+    ...lastResult,
+    quote_name:  document.getElementById('quote_name').value || 'Quick Quote',
+    job_id:      document.getElementById('quote_job_id').value || null,
+    client_id:   document.getElementById('quote_client_id').value || null,
+    notes:       document.getElementById('quote_notes').value || '',
+    // ensure sell_price at top level
+    sell_price:  lastResult.sell_price,
+    direct:      lastResult.direct,
+    labor:       parseFloat(document.getElementById('labor')?.value)     || 0,
+    materials:   parseFloat(document.getElementById('materials')?.value) || 0,
+    subs:        parseFloat(document.getElementById('subs')?.value)      || 0,
+    other:       parseFloat(document.getElementById('other')?.value)     || 0,
+  };
+
+  const r = await fetch('/api/quick-quote/save-as-estimate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+  const d = await r.json();
+
+  if (d.success) {
+    document.getElementById('saveResult').innerHTML =
+      `✅ Saved as <a href="/estimates/${d.estimate_id}" style="color:var(--green)">${d.estimate_number}</a>`;
+    btn.textContent = '✅ Saved!';
+    showToast(`Saved as ${d.estimate_number}`, 'success');
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = '📋 Save as Draft Estimate';
+    }, 3000);
+  } else {
+    showToast(d.error || 'Save failed', 'error');
+    btn.disabled = false;
+    btn.textContent = '📋 Save as Draft Estimate';
+  }
+}
+
+// ─── Init ─────────────────────────────────────────────────────
+updateTotalPct();
+calc();
+</script>
+{% endblock %}

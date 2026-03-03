@@ -1,0 +1,495 @@
+{% extends "base.html" %}
+{% block title %}Tax Reminders — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}📅 Tax Reminders & Deadlines{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Tax Reminders{% endblock %}
+
+{% block content %}
+<!-- ── Summary Tiles ── -->
+<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
+  <div class="kpi-tile {% if overdue %}red{% endif %}">
+    <div class="kpi-label">Overdue</div>
+    <div class="kpi-value {% if overdue %}text-red{% endif %}">{{ overdue|length }}</div>
+    <div class="kpi-sub">past due date</div>
+  </div>
+  <div class="kpi-tile {% if upcoming7 %}yellow{% endif %}">
+    <div class="kpi-label">Due This Week</div>
+    <div class="kpi-value {% if upcoming7 %}text-yellow{% endif %}">{{ upcoming7|length }}</div>
+    <div class="kpi-sub">next 7 days</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Pending</div>
+    <div class="kpi-value">{{ pending|length }}</div>
+  </div>
+  <div class="kpi-tile green">
+    <div class="kpi-label">Done</div>
+    <div class="kpi-value text-green">{{ done|length }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Snoozed</div>
+    <div class="kpi-value text-dim">{{ snoozed|length }}</div>
+  </div>
+</div>
+
+<!-- ── Toolbar ── -->
+<div class="card" style="margin-bottom:12px">
+  <div class="card-body" style="padding:10px 14px">
+    <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
+      <!-- Year picker -->
+      <form method="GET" class="flex gap-6" style="align-items:center">
+        <input type="hidden" name="view" value="{{ view }}">
+        <label class="text-dim" style="font-size:12px">Year:</label>
+        <select name="year" style="min-width:80px" onchange="this.form.submit()">
+          {% for yr in year_list %}
+          <option value="{{ yr }}" {% if yr == year|string %}selected{% endif %}>{{ yr }}</option>
+          {% endfor %}
+          <option value="{{ year + 1 }}" {% if (year + 1)|string not in year_list %}{% endif %}>{{ year + 1 }}</option>
+        </select>
+        <!-- Status filter -->
+        <select name="status" style="min-width:110px" onchange="this.form.submit()">
+          <option value="" {% if not status_f %}selected{% endif %}>All Status</option>
+          <option value="Pending"     {% if status_f=='Pending' %}selected{% endif %}>Pending</option>
+          <option value="Done"        {% if status_f=='Done' %}selected{% endif %}>Done</option>
+          <option value="RemindLater" {% if status_f=='RemindLater' %}selected{% endif %}>Snoozed</option>
+        </select>
+      </form>
+
+      <!-- View toggle -->
+      <div class="btn-group">
+        <a href="?year={{ year }}&view=list&status={{ status_f }}"
+           class="btn btn-sm {% if view=='list' %}btn-primary{% else %}btn-outline{% endif %}">☰ List</a>
+        <a href="?year={{ year }}&view=calendar&status={{ status_f }}&month={{ cal_month }}&cal_year={{ cal_year }}"
+           class="btn btn-sm {% if view=='calendar' %}btn-primary{% else %}btn-outline{% endif %}">📆 Calendar</a>
+      </div>
+
+      <!-- Actions -->
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="openModal('modal-advance')">🔁 Advance Year</button>
+        <button class="btn btn-outline btn-sm" onclick="openModal('modal-seed')">🌱 Seed Deadlines</button>
+        <a href="/tax/export?year={{ year }}" class="btn btn-outline btn-sm">⬇ Export CSV</a>
+        <a href="/tax/new" class="btn btn-primary btn-sm">+ Add Reminder</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if view == 'calendar' %}
+<!-- ══════════════════════════════════════════
+     CALENDAR VIEW
+═══════════════════════════════════════════ -->
+<div class="card">
+  <div class="card-header">
+    <div class="flex" style="align-items:center;gap:12px">
+      <a href="?year={{ year }}&view=calendar&month={{ prev_month }}&cal_year={{ prev_cal_year }}" class="btn btn-outline btn-sm">←</a>
+      <span class="card-title" style="min-width:160px;text-align:center">{{ month_name }} {{ cal_year }}</span>
+      <a href="?year={{ year }}&view=calendar&month={{ next_month }}&cal_year={{ next_cal_year }}" class="btn btn-outline btn-sm">→</a>
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr>
+          {% for day_name in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}
+          <th style="padding:8px;text-align:center;font-size:11px;color:var(--text-dim);font-weight:600;border-bottom:1px solid var(--border)">{{ day_name }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for week in month_grid %}
+        <tr>
+          {% for day in week %}
+          <td style="border:1px solid var(--border);padding:6px;vertical-align:top;min-height:80px;width:14.28%">
+            {% if day == 0 %}
+            <div style="height:60px"></div>
+            {% else %}
+            <div class="flex" style="justify-content:space-between;align-items:center;margin-bottom:4px">
+              <span style="font-size:12px;font-weight:{% if today == cal_year|string + '-' + '%02d'|format(cal_month) + '-' + '%02d'|format(day) %}700{% else %}400{% endif %};
+                           {% if today == cal_year|string + '-' + '%02d'|format(cal_month) + '-' + '%02d'|format(day) %}color:var(--accent){% endif %}">
+                {{ day }}
+              </span>
+            </div>
+            {% for rem in cal_map.get(day, []) %}
+            <div class="cal-event {% if rem.status == 'Done' %}cal-done{% elif rem.due_date < today %}cal-overdue{% elif rem.due_date <= (today[:8] + '%02d'|format(day+7))[:10] %}cal-soon{% else %}cal-upcoming{% endif %}"
+                 onclick="showQuickDetail({{ rem.id }}, '{{ rem.task_description|replace("'","'") }}', '{{ rem.due_date }}', '{{ rem.status }}')"
+                 style="font-size:10px;padding:2px 5px;border-radius:3px;margin-bottom:2px;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"
+                 title="{{ rem.task_description }} — {{ rem.status }}">
+              {{ rem.task_description[:28] }}{% if rem.task_description|length > 28 %}…{% endif %}
+            </div>
+            {% endfor %}
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% else %}
+<!-- ══════════════════════════════════════════
+     LIST VIEW
+═══════════════════════════════════════════ -->
+
+{% for section_id, section_title, section_rows in sections %}
+{% if section_rows %}
+<div class="card" style="margin-bottom:12px" id="section-{{ section_id }}">
+  <div class="card-header" style="cursor:pointer" onclick="toggleSection('{{ section_id }}')">
+    <span class="card-title">{{ section_title }} ({{ section_rows|length }})</span>
+    <span id="chevron-{{ section_id }}" style="color:var(--text-dim)">▼</span>
+  </div>
+  <div id="body-{{ section_id }}" class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:105px">Due Date</th>
+          <th>Deadline / Task</th>
+          <th style="width:80px">Type</th>
+          <th style="width:80px">Amount</th>
+          <th style="width:80px">Status</th>
+          <th style="width:70px">Urgency</th>
+          <th style="width:130px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rem in section_rows %}
+        <tr id="rem-row-{{ rem.id }}" class="{% if rem.urgency == 'overdue' %}row-overdue{% elif rem.urgency == 'urgent' %}row-urgent{% endif %}">
+          <td class="mono" style="font-size:11px">
+            {{ rem.due_date }}
+            {% if rem.payment_date and rem.status == 'Done' %}
+            <br><span class="text-dim" style="font-size:9px">Paid {{ rem.payment_date }}</span>
+            {% endif %}
+          </td>
+          <td>
+            <div style="font-size:12px;font-weight:500">{{ rem.task_description }}</div>
+            {% if rem.url %}
+            <a href="{{ rem.url }}" target="_blank" class="text-dim" style="font-size:10px">🔗 IRS/Gov link</a>
+            {% endif %}
+            {% if rem.notes %}
+            <div class="text-dim" style="font-size:10px">{{ rem.notes }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if rem.is_recurring %}
+              <span class="badge badge-blue" style="font-size:9px">{{ rem.frequency or 'Recurring' }}</span>
+            {% else %}
+              <span class="text-dim" style="font-size:10px">One-time</span>
+            {% endif %}
+          </td>
+          <td class="mono" style="font-size:11px">
+            {% if rem.amount %}${{ '{:,.2f}'.format(rem.amount) }}{% else %}<span class="text-dim">—</span>{% endif %}
+          </td>
+          <td>
+            {% set badge_map = {'Done': 'green', 'RemindLater': 'gray', 'Pending': 'yellow'} %}
+            <span class="badge badge-{{ badge_map.get(rem.status, 'gray') }}" style="font-size:9px">{{ rem.status }}</span>
+          </td>
+          <td>
+            {% if rem.urgency_label %}
+              <span class="urgency-{{ rem.urgency }}" style="font-size:11px">{{ rem.urgency_label }}</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="flex gap-4">
+              {% if rem.status != 'Done' %}
+              <button class="btn btn-xs btn-success" onclick="markDone({{ rem.id }}, '{{ rem.task_description|replace("'","") }}')" title="Mark done">✅</button>
+              <button class="btn btn-xs btn-outline" onclick="snoozeReminder({{ rem.id }})" title="Snooze">💤</button>
+              {% else %}
+              <button class="btn btn-xs btn-outline" onclick="reopenReminder({{ rem.id }})" title="Re-open">↩</button>
+              {% endif %}
+              <a href="/tax/{{ rem.id }}/edit" class="btn btn-xs btn-outline" title="Edit">✏️</a>
+              <button class="btn btn-xs btn-danger" onclick="deleteReminder({{ rem.id }})" title="Delete">🗑</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+
+{% if not reminders %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:40px">
+    <div style="font-size:40px;margin-bottom:10px">📅</div>
+    <p class="text-dim">No tax reminders for {{ year }}.</p>
+    <div class="flex gap-8" style="justify-content:center;margin-top:12px">
+      <button class="btn btn-outline" onclick="openModal('modal-seed')">🌱 Seed Standard Deadlines</button>
+      <a href="/tax/new" class="btn btn-primary">+ Add Reminder</a>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- ══ Mark Done Modal ════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-done">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3>✅ Mark as Done</h3>
+      <button class="modal-close" onclick="closeModal('modal-done')">×</button>
+    </div>
+    <div class="modal-body">
+      <p id="done-title" style="font-size:12px;color:var(--text-dim);margin-bottom:12px"></p>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Payment / Completed Date</label>
+          <input type="date" id="done-date" value="{{ today }}">
+        </div>
+        <div class="form-group">
+          <label>Amount Paid (optional)</label>
+          <input type="number" id="done-amount" step="0.01" min="0" placeholder="0.00">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-done')">Cancel</button>
+      <button class="btn btn-success" onclick="confirmDone()">✅ Mark Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Snooze Modal ════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-snooze">
+  <div class="modal" style="max-width:340px">
+    <div class="modal-header">
+      <h3>💤 Snooze Reminder</h3>
+      <button class="modal-close" onclick="closeModal('modal-snooze')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Remind me in:</label>
+        <div class="flex gap-8" style="flex-wrap:wrap;margin-top:6px">
+          {% for n, label in [(1,'Tomorrow'), (3,'3 days'), (7,'1 week'), (14,'2 weeks'), (30,'1 month')] %}
+          <button class="btn btn-outline btn-sm snooze-preset" data-days="{{ n }}"
+                  onclick="selectSnooze({{ n }})"
+                  style="min-width:80px">{{ label }}</button>
+          {% endfor %}
+        </div>
+        <div style="margin-top:10px">
+          <label>Or enter days:</label>
+          <input type="number" id="snooze-days" min="1" max="365" value="7" style="width:80px;margin-left:8px">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-snooze')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmSnooze()">💤 Snooze</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Advance Year Modal ══════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-advance">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3>🔁 Advance Year</h3>
+      <button class="modal-close" onclick="closeModal('modal-advance')">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+        Clone all recurring reminders from one year into the next, updating dates and year references automatically.
+      </p>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>From Year</label>
+          <input type="number" id="advance-from" value="{{ year }}" min="2020" max="2035">
+        </div>
+        <div class="form-group">
+          <label>To Year</label>
+          <input type="number" id="advance-to" value="{{ year + 1 }}" min="2021" max="2036">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-advance')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmAdvance()">🔁 Clone Reminders</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Seed Deadlines Modal ════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-seed">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h3>🌱 Seed Standard Deadlines</h3>
+      <button class="modal-close" onclick="closeModal('modal-seed')">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+        Add all standard IRS and IL tax deadlines (Form 941, estimated taxes, W-2s, 1099s, FUTA) for a year. Already-existing deadlines are skipped.
+      </p>
+      <div class="form-group">
+        <label>Year to seed</label>
+        <input type="number" id="seed-year" value="{{ year }}" min="2024" max="2035">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-seed')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmSeed()">🌱 Seed Deadlines</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.urgency-overdue { color: var(--red);    font-weight: 600; }
+.urgency-urgent  { color: var(--yellow); font-weight: 600; }
+.urgency-soon    { color: var(--yellow); }
+.urgency-upcoming{ color: var(--text-dim); }
+.urgency-done    { color: var(--green); }
+.row-overdue     { background: rgba(231,76,60,0.04); }
+.row-urgent      { background: rgba(243,156,18,0.04); }
+.cal-event       { display: block; }
+.cal-overdue     { background: rgba(231,76,60,0.15); color: var(--red); }
+.cal-soon        { background: rgba(243,156,18,0.15); color: var(--yellow); }
+.cal-upcoming    { background: rgba(61,133,245,0.12); color: var(--accent); }
+.cal-done        { background: rgba(39,174,96,0.12);  color: var(--green); text-decoration:line-through; }
+</style>
+
+<script>
+let _doneId = null, _snoozeId = null;
+
+// ── Sections ────────────────────────────────────────────────────
+const _collapsed = {};
+function toggleSection(id) {
+  const body = document.getElementById('body-'+id);
+  const chev = document.getElementById('chevron-'+id);
+  if (!body) return;
+  _collapsed[id] = !_collapsed[id];
+  body.style.display = _collapsed[id] ? 'none' : '';
+  if (chev) chev.textContent = _collapsed[id] ? '▶' : '▼';
+}
+// Auto-collapse done section if many items
+document.addEventListener('DOMContentLoaded', () => {
+  const doneBody = document.getElementById('body-done');
+  const doneRows = doneBody?.querySelectorAll('tbody tr')?.length || 0;
+  if (doneRows > 5) toggleSection('done');
+});
+
+// ── Mark Done ────────────────────────────────────────────────────
+function markDone(id, title) {
+  _doneId = id;
+  document.getElementById('done-title').textContent = title;
+  document.getElementById('done-date').value = '{{ today }}';
+  document.getElementById('done-amount').value = '';
+  openModal('modal-done');
+  setTimeout(() => document.getElementById('done-amount').focus(), 100);
+}
+
+async function confirmDone() {
+  const d = {
+    payment_date: document.getElementById('done-date').value,
+    amount: parseFloat(document.getElementById('done-amount').value || 0),
+  };
+  const res = await fetch(`/api/reminders/${_doneId}/done`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(d)
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast('Marked as done ✅', 'success');
+    closeModal('modal-done');
+    // Remove row from current section, show it in done section
+    const row = document.getElementById('rem-row-'+_doneId);
+    if (row) row.remove();
+    setTimeout(() => window.location.reload(), 800);
+  } else {
+    showToast(data.error || 'Failed', 'error');
+  }
+}
+
+// ── Snooze ───────────────────────────────────────────────────────
+function snoozeReminder(id) {
+  _snoozeId = id;
+  openModal('modal-snooze');
+}
+
+function selectSnooze(days) {
+  document.getElementById('snooze-days').value = days;
+  document.querySelectorAll('.snooze-preset').forEach(b => {
+    b.classList.toggle('btn-primary', parseInt(b.dataset.days) === days);
+    b.classList.toggle('btn-outline', parseInt(b.dataset.days) !== days);
+  });
+}
+
+async function confirmSnooze() {
+  const days = parseInt(document.getElementById('snooze-days').value || 7);
+  const res  = await fetch(`/api/reminders/${_snoozeId}/snooze`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({days})
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast(`Snoozed until ${data.new_due_date}`, 'success');
+    closeModal('modal-snooze');
+    setTimeout(() => window.location.reload(), 600);
+  } else {
+    showToast(data.error || 'Failed', 'error');
+  }
+}
+
+// ── Reopen / Delete ──────────────────────────────────────────────
+async function reopenReminder(id) {
+  const res  = await fetch(`/api/reminders/${id}/reopen`, {method:'POST', headers:{'Content-Type':'application/json'}});
+  const data = await res.json();
+  if (data.success) { showToast('Reopened', 'success'); setTimeout(() => window.location.reload(), 600); }
+}
+
+async function deleteReminder(id) {
+  if (!confirm('Delete this reminder? You can undo.')) return;
+  const res  = await fetch(`/api/reminders/${id}/delete`, {method:'POST', headers:{'Content-Type':'application/json'}});
+  const data = await res.json();
+  if (data.success) {
+    document.getElementById('rem-row-'+id)?.remove();
+    showToast('Deleted', 'success');
+  }
+}
+
+// ── Advance Year ──────────────────────────────────────────────────
+async function confirmAdvance() {
+  const from_year = parseInt(document.getElementById('advance-from').value);
+  const to_year   = parseInt(document.getElementById('advance-to').value);
+  if (to_year <= from_year) { showToast('To Year must be after From Year', 'error'); return; }
+  const res  = await fetch('/api/reminders/advance-year', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({from_year, to_year})
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast(`Created ${data.created} reminders for ${data.to_year}!`, 'success');
+    closeModal('modal-advance');
+    setTimeout(() => window.location = `/tax?year=${to_year}`, 800);
+  } else {
+    showToast(data.error || 'Failed', 'error');
+  }
+}
+
+// ── Seed ────────────────────────────────────────────────────────
+async function confirmSeed() {
+  const year = parseInt(document.getElementById('seed-year').value);
+  const res  = await fetch('/api/reminders/seed-year', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({year})
+  });
+  const data = await res.json();
+  if (data.success) {
+    const msg = data.created > 0
+      ? `Added ${data.created} deadlines for ${data.year}!`
+      : `All deadlines for ${data.year} already exist.`;
+    showToast(msg, data.created > 0 ? 'success' : 'info');
+    closeModal('modal-seed');
+    if (data.created > 0) setTimeout(() => window.location = `/tax?year=${data.year}`, 800);
+  } else {
+    showToast(data.error || 'Failed', 'error');
+  }
+}
+
+// ── Calendar quick-detail ────────────────────────────────────────
+function showQuickDetail(id, title, dueDate, status) {
+  alert(`${title}\nDue: ${dueDate}\nStatus: ${status}\n\nClick OK to edit.`);
+  window.location = `/tax/${id}/edit`;
+}
+</script>
+{% endblock %}

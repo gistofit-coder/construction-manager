@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Invoices — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}🧾 Invoices{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Invoices{% endblock %}
+
+{% block content %}
+<!-- KPI tiles -->
+<div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
+  <div class="kpi-tile green">
+    <div class="kpi-label">Collected (YTD)</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(summary.paid_total or 0) }}</div>
+  </div>
+  <div class="kpi-tile accent">
+    <div class="kpi-label">Outstanding</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format(summary.outstanding or 0) }}</div>
+    <div class="kpi-sub">{{ summary.open_count }} open</div>
+  </div>
+  <div class="kpi-tile {% if summary.overdue_count %}red{% endif %}">
+    <div class="kpi-label">Overdue</div>
+    <div class="kpi-value {% if summary.overdue_count %}text-red{% endif %}">${{ '{:,.0f}'.format(summary.overdue or 0) }}</div>
+    <div class="kpi-sub">{{ summary.overdue_count }} invoices</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Total Invoiced</div>
+    <div class="kpi-value">${{ '{:,.0f}'.format((summary.outstanding or 0) + (summary.paid_total or 0)) }}</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Open Invoices</div>
+    <div class="kpi-value">{{ total_count }}</div>
+    <div class="kpi-sub">shown with filters</div>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom:12px">
+  <div class="card-body" style="padding:10px 14px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="flex:1;min-width:160px;margin:0">
+        <label>Search</label>
+        <input type="search" name="q" value="{{ q }}" placeholder="Invoice #, client, job…" class="search">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Status</label>
+        <select name="status" style="min-width:110px">
+          <option value="">All Status</option>
+          {% for s in ['Pending','Partial','Overdue','Paid'] %}
+          <option value="{{ s }}" {% if status_filter==s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Client</label>
+        <select name="client" style="min-width:140px">
+          <option value="">All Clients</option>
+          {% for c in clients %}
+          <option value="{{ c.id }}" {% if client_filter==c.id|string %}selected{% endif %}>{{ c.full_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Job</label>
+        <select name="job" style="min-width:110px">
+          <option value="">All Jobs</option>
+          {% for j in jobs %}
+          <option value="{{ j }}" {% if job_filter==j %}selected{% endif %}>{{ j }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Year</label>
+        <select name="year" style="min-width:80px">
+          <option value="">All Years</option>
+          {% for yr in years %}
+          <option value="{{ yr }}" {% if year_filter==yr %}selected{% endif %}>{{ yr }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if q or status_filter or client_filter or job_filter or year_filter %}
+        <a href="/invoices" class="btn btn-outline btn-sm">Clear</a>
+      {% endif %}
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <a href="/invoices/export?status={{ status_filter }}&client={{ client_filter }}&year={{ year_filter }}" class="btn btn-outline btn-sm">⬇ Export CSV</a>
+        <a href="/invoices/new" class="btn btn-primary btn-sm">+ New Invoice</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Invoice table -->
+<div class="card">
+  <div class="card-body no-pad">
+    <div class="table-wrap">
+      <table id="invoices-table">
+        <thead>
+          <tr>
+            <th style="width:80px">Invoice #</th>
+            <th style="width:100px">Date</th>
+            <th style="width:100px">Due Date</th>
+            <th>Client</th>
+            <th style="width:100px">Job</th>
+            <th style="width:110px;text-align:right">Amount</th>
+            <th style="width:110px;text-align:right">Balance Due</th>
+            <th style="width:90px">Status</th>
+            <th style="width:80px">Aging</th>
+            <th style="width:80px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr class="{% if row.status == 'Overdue' %}row-overdue{% endif %}"
+              style="{% if row.status == 'Overdue' %}background:rgba(231,76,60,0.04){% endif %}">
+            <td>
+              <a href="/invoices/{{ row.id }}" class="text-accent mono" style="font-weight:600;text-decoration:none">
+                #{{ row.invoice_number }}
+              </a>
+            </td>
+            <td class="mono text-dim" style="font-size:11px">{{ row.invoice_date }}</td>
+            <td class="mono {% if row.status == 'Overdue' %}text-red{% else %}text-dim{% endif %}" style="font-size:11px">
+              {{ row.due_date or '—' }}
+            </td>
+            <td>
+              <div style="font-size:12px">{{ row.client_name or '—' }}</div>
+              {% if row.customer_id %}
+              <div class="text-dim" style="font-size:10px">{{ row.customer_id }}</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.job_code %}
+                <span class="badge badge-blue">{{ row.job_code }}</span>
+              {% else %}
+                <span class="text-dim">—</span>
+              {% endif %}
+            </td>
+            <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(row.amount) }}</td>
+            <td style="text-align:right">
+              {% if row.balance_due <= 0 %}
+                <span class="text-dim mono" style="font-size:11px">$0.00</span>
+              {% elif row.status == 'Overdue' %}
+                <span class="text-red mono" style="font-weight:600">${{ '{:,.2f}'.format(row.balance_due) }}</span>
+              {% else %}
+                <span class="mono" style="font-weight:600">${{ '{:,.2f}'.format(row.balance_due) }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% set badge_color = {'Paid': 'green', 'Partial': 'yellow', 'Overdue': 'red', 'Pending': 'gray'} %}
+              <span class="badge badge-{{ badge_color.get(row.status, 'gray') }}">{{ row.status }}</span>
+            </td>
+            <td>
+              {% if row.status != 'Paid' and row.days_overdue > 0 %}
+                <span class="text-red" style="font-size:11px">{{ row.days_overdue }}d late</span>
+              {% elif row.status == 'Paid' %}
+                <span class="text-dim" style="font-size:11px">—</span>
+              {% else %}
+                <span class="text-dim" style="font-size:11px">Due {{ row.due_date }}</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="flex gap-4">
+                <a href="/invoices/{{ row.id }}" class="btn btn-outline btn-xs" title="View">👁</a>
+                <a href="/invoices/{{ row.id }}/edit" class="btn btn-outline btn-xs" title="Edit">✏️</a>
+                <a href="/invoices/{{ row.id }}/pdf" class="btn btn-outline btn-xs" title="PDF" target="_blank">🖨</a>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="10" class="empty-state" style="padding:40px;text-align:center">
+              <div style="font-size:36px;margin-bottom:10px">🧾</div>
+              <p class="text-dim">No invoices{% if q or status_filter or client_filter %} matching filters{% endif %}.</p>
+              <a href="/invoices/new" class="btn btn-primary mt-8">+ New Invoice</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pages > 1 %}
+    <div class="flex gap-8" style="padding:10px;justify-content:center;border-top:1px solid var(--border)">
+      {% if page > 1 %}
+        <a href="?page={{ page-1 }}&status={{ status_filter }}&client={{ client_filter }}&job={{ job_filter }}&year={{ year_filter }}&q={{ q }}" class="btn btn-outline btn-sm">← Prev</a>
+      {% endif %}
+      <span class="text-dim" style="align-self:center">Page {{ page }} / {{ pages }}</span>
+      {% if page < pages %}
+        <a href="?page={{ page+1 }}&status={{ status_filter }}&client={{ client_filter }}&job={{ job_filter }}&year={{ year_filter }}&q={{ q }}" class="btn btn-outline btn-sm">Next →</a>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => initSortableTable('invoices-table'));
+</script>
+{% endblock %}

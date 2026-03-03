@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}Invoice #{{ invoice.invoice_number }} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}🧾 Invoice #{{ invoice.invoice_number }}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/invoices">Invoices</a> / #{{ invoice.invoice_number }}{% endblock %}
+
+{% block content %}
+{% set badge_color = {'Paid': 'green', 'Partial': 'yellow', 'Overdue': 'red', 'Pending': 'gray'} %}
+
+<!-- Header row -->
+<div class="flex gap-8" style="margin-bottom:16px;align-items:flex-start;flex-wrap:wrap">
+  <div>
+    <div class="flex gap-8" style="align-items:center;margin-bottom:4px">
+      <h1 style="font-size:22px;font-weight:700;color:var(--text-bright)">Invoice #{{ invoice.invoice_number }}</h1>
+      <span class="badge badge-{{ badge_color.get(invoice.status, 'gray') }}" style="font-size:12px">{{ invoice.status }}</span>
+      {% if invoice.status == 'Overdue' and invoice.days_overdue > 0 %}
+        <span class="badge badge-red" style="font-size:11px">{{ invoice.days_overdue }}d overdue</span>
+      {% endif %}
+    </div>
+    <div class="text-dim" style="font-size:12px">
+      Issued {{ invoice.invoice_date }}
+      {% if invoice.due_date %} · Due {{ invoice.due_date }}{% endif %}
+    </div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    {% if invoice.status != 'Paid' %}
+      <button class="btn btn-success" onclick="openModal('modal-payment')">💵 Record Payment</button>
+    {% endif %}
+    <a href="/invoices/{{ invoice.id }}/pdf" class="btn btn-outline" target="_blank">🖨 Print / PDF</a>
+    <a href="/invoices/{{ invoice.id }}/edit" class="btn btn-outline">✏️ Edit</a>
+    <button class="btn btn-danger btn-sm"
+            onclick="if(confirm('Delete invoice #{{ invoice.invoice_number }}? You can undo.')) { fetch('/invoices/{{ invoice.id }}/delete',{method:'POST'}).then(()=>window.location='/invoices'); }">
+      🗑
+    </button>
+  </div>
+</div>
+
+<div class="grid-2" style="gap:16px;margin-bottom:16px">
+  <!-- Left: Invoice info -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">Invoice Details</span></div>
+    <div class="card-body">
+      <table style="width:100%">
+        <tbody>
+          <tr>
+            <td class="text-dim" style="padding:5px 0;width:140px;font-size:11px">Client</td>
+            <td style="font-size:12px;font-weight:600">
+              {% if invoice.client_name %}
+                <a href="#" class="text-accent" style="text-decoration:none">{{ invoice.client_name }}</a>
+                {% if invoice.customer_id %}<span class="text-dim"> ({{ invoice.customer_id }})</span>{% endif %}
+              {% else %}—{% endif %}
+            </td>
+          </tr>
+          {% if invoice.address %}
+          <tr>
+            <td class="text-dim" style="padding:5px 0;font-size:11px">Address</td>
+            <td style="font-size:12px">{{ invoice.address }}<br>{{ invoice.city_state_zip }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td class="text-dim" style="padding:5px 0;font-size:11px">Job</td>
+            <td>
+              {% if invoice.job_code %}
+                <span class="badge badge-blue">{{ invoice.job_code }}</span>
+                {% if invoice.job_desc %}<span class="text-dim" style="font-size:11px;margin-left:6px">{{ invoice.job_desc }}</span>{% endif %}
+              {% else %}—{% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-dim" style="padding:5px 0;font-size:11px">Description</td>
+            <td style="font-size:12px">{{ invoice.description_of_work or '—' }}</td>
+          </tr>
+          {% if invoice.notes %}
+          <tr>
+            <td class="text-dim" style="padding:5px 0;font-size:11px">Notes</td>
+            <td style="font-size:12px;color:var(--text-dim)">{{ invoice.notes }}</td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Right: Financial summary -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">Financial Summary</span></div>
+    <div class="card-body">
+      <div style="display:grid;gap:12px">
+        <div class="flex" style="justify-content:space-between;align-items:center">
+          <span class="text-dim" style="font-size:12px">Invoice Amount</span>
+          <span class="mono" style="font-size:18px;font-weight:700;color:var(--text-bright)">${{ '{:,.2f}'.format(invoice.amount) }}</span>
+        </div>
+        <div class="flex" style="justify-content:space-between;align-items:center">
+          <span class="text-dim" style="font-size:12px">Amount Paid</span>
+          <span class="mono text-green" style="font-size:15px;font-weight:600">${{ '{:,.2f}'.format(invoice.amount_paid) }}</span>
+        </div>
+        {% if invoice.adjustment_amount %}
+        <div class="flex" style="justify-content:space-between;align-items:center">
+          <span class="text-dim" style="font-size:12px">
+            Adjustment{% if invoice.adjustment_note %}: {{ invoice.adjustment_note }}{% endif %}
+          </span>
+          <span class="mono {% if invoice.adjustment_amount < 0 %}text-red{% else %}text-green{% endif %}" style="font-size:13px">
+            {% if invoice.adjustment_amount > 0 %}+{% endif %}${{ '{:,.2f}'.format(invoice.adjustment_amount) }}
+          </span>
+        </div>
+        {% endif %}
+        <hr class="dim">
+        <div class="flex" style="justify-content:space-between;align-items:center">
+          <span style="font-size:13px;font-weight:600">Balance Due</span>
+          <span class="mono {% if invoice.balance_due > 0 %}{% if invoice.status == 'Overdue' %}text-red{% else %}text-yellow{% endif %}{% else %}text-green{% endif %}"
+                style="font-size:20px;font-weight:700">
+            ${{ '{:,.2f}'.format(invoice.balance_due) }}
+          </span>
+        </div>
+
+        {% if invoice.amount > 0 %}
+        <div style="margin-top:4px">
+          <div class="text-dim" style="font-size:10px;margin-bottom:4px">
+            Collection Progress ({{ '{:.0f}'.format(invoice.amount_paid / invoice.amount * 100) }}%)
+          </div>
+          <div class="progress-bar" style="height:10px">
+            <div class="progress-fill green" style="width:{{ '{:.0f}'.format([invoice.amount_paid / invoice.amount * 100, 100]|min) }}%"></div>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if invoice.status != 'Paid' %}
+        <button class="btn btn-success" onclick="openModal('modal-payment')" style="margin-top:8px">
+          💵 Record Payment
+        </button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Timesheet rows linked to this invoice -->
+{% if ts_rows %}
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header">
+    <span class="card-title">Linked Timesheet Entries</span>
+    <div class="card-actions">
+      <span class="text-dim" style="font-size:11px">
+        {{ '{:.1f}'.format(ts_summary.total_hours) }} hrs ·
+        Bill: ${{ '{:,.2f}'.format(ts_summary.total_bill) }} ·
+        Cost: ${{ '{:,.2f}'.format(ts_summary.total_cost) }}
+        {% if ts_summary.total_bill > 0 %}
+          · Margin: {{ '{:.0f}'.format((ts_summary.total_bill - ts_summary.total_cost) / ts_summary.total_bill * 100) }}%
+        {% endif %}
+      </span>
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Employee</th>
+            <th style="text-align:right">Hours</th>
+            <th style="text-align:right">Bill Rate</th>
+            <th style="text-align:right">Bill Amt</th>
+            <th style="text-align:right">Cost Amt</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in ts_rows %}
+          <tr>
+            <td class="mono text-dim" style="font-size:11px">{{ row.entry_date }}</td>
+            <td style="font-size:12px">{{ row.emp_name or row.person_label or '—' }}</td>
+            <td style="text-align:right" class="mono">{{ '{:.2f}'.format(row.hours) }}</td>
+            <td style="text-align:right" class="mono text-dim" style="font-size:11px">${{ '{:.2f}'.format(row.bill_rate) }}</td>
+            <td style="text-align:right" class="mono text-green" style="font-weight:600">${{ '{:,.2f}'.format(row.bill_amount) }}</td>
+            <td style="text-align:right" class="mono text-red">${{ '{:,.2f}'.format(row.cost_amount) }}</td>
+            <td class="text-dim" style="font-size:11px">{{ row.description or '—' }}</td>
+          </tr>
+          {% endfor %}
+          <tr style="background:var(--bg);font-weight:700">
+            <td colspan="2" class="text-dim" style="font-size:11px;padding:8px 12px">Total</td>
+            <td style="text-align:right" class="mono">{{ '{:.2f}'.format(ts_summary.total_hours) }}</td>
+            <td></td>
+            <td style="text-align:right" class="mono text-green">${{ '{:,.2f}'.format(ts_summary.total_bill) }}</td>
+            <td style="text-align:right" class="mono text-red">${{ '{:,.2f}'.format(ts_summary.total_cost) }}</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- Payment history -->
+{% if payments %}
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header"><span class="card-title">Payment History</span></div>
+  <div class="card-body no-pad">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th style="text-align:right">Amount</th>
+          <th>Description</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td class="mono text-dim" style="font-size:11px">{{ p.entry_date }}</td>
+          <td style="text-align:right" class="mono text-green" style="font-weight:600">${{ '{:,.2f}'.format(p.amount) }}</td>
+          <td style="font-size:12px">{{ p.description or '—' }}</td>
+          <td class="text-dim" style="font-size:11px">Ledger #{{ p.id }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Record Payment Modal -->
+<div class="modal-overlay" id="modal-payment">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>💵 Record Payment — Invoice #{{ invoice.invoice_number }}</h3>
+      <button class="modal-close" onclick="closeModal('modal-payment')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Payment Date <span class="req">*</span></label>
+          <input type="date" id="pay-date" value="{{ today }}">
+        </div>
+        <div class="form-group">
+          <label>Payment Amount <span class="req">*</span></label>
+          <input type="number" id="pay-amount" step="0.01" min="0.01"
+                 value="{{ '{:.2f}'.format(invoice.balance_due) }}"
+                 placeholder="0.00">
+          <div class="field-hint">Balance due: ${{ '{:,.2f}'.format(invoice.balance_due) }}</div>
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <input type="text" id="pay-notes" placeholder="Check #, reference, etc.">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-payment')">Cancel</button>
+      <button class="btn btn-success" onclick="recordPayment()">💵 Record Payment</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function recordPayment() {
+  const amount = document.getElementById('pay-amount').value;
+  const date   = document.getElementById('pay-date').value;
+  const notes  = document.getElementById('pay-notes').value;
+
+  if (!amount || parseFloat(amount) <= 0) {
+    showToast('Enter a valid payment amount', 'error'); return;
+  }
+
+  const res = await fetch('/invoices/{{ invoice.id }}/payment', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ payment_amount: parseFloat(amount), payment_date: date, notes })
+  });
+  const d = await res.json();
+  if (d.success) {
+    showToast('Payment recorded!', 'success');
+    closeModal('modal-payment');
+    setTimeout(() => window.location.reload(), 600);
+  } else {
+    showToast(d.error || 'Failed', 'error');
+  }
+}
+</script>
+{% endblock %}

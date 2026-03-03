@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}{% if reminder %}Edit Reminder{% else %}New Reminder{% endif %} — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}📅 {% if reminder %}Edit Reminder{% else %}New Tax Reminder{% endif %}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/tax">Tax Reminders</a> / {% if reminder %}Edit{% else %}New{% endif %}{% endblock %}
+
+{% block content %}
+<div style="max-width:600px">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">{% if reminder %}Edit Reminder{% else %}Add Tax Reminder{% endif %}</span>
+    </div>
+    <div class="card-body">
+      <form method="POST" id="rem-form"
+            action="{% if reminder %}/tax/{{ reminder.id }}/edit{% else %}/tax/new{% endif %}">
+        <div class="form-grid">
+
+          <div class="form-group full">
+            <label>Description / Task <span class="req">*</span></label>
+            <input type="text" name="task_description" required
+                   value="{{ reminder.task_description if reminder else prefill_desc }}"
+                   placeholder="e.g. Form 941 - Q1 2026">
+          </div>
+
+          <div class="form-group">
+            <label>Due Date <span class="req">*</span></label>
+            <input type="date" name="due_date" required
+                   value="{{ reminder.due_date if reminder else prefill_date }}">
+          </div>
+
+          <div class="form-group">
+            <label>Amount (if known)</label>
+            <input type="number" name="amount" step="0.01" min="0"
+                   value="{{ '{:.2f}'.format(reminder.amount) if reminder and reminder.amount else '' }}"
+                   placeholder="0.00">
+          </div>
+
+          <div class="form-group">
+            <label>Recurring?</label>
+            <div class="flex gap-8" style="align-items:center;margin-top:6px">
+              <label class="flex gap-6" style="align-items:center;cursor:pointer">
+                <input type="checkbox" name="is_recurring" id="is-recurring"
+                       {% if reminder and reminder.is_recurring %}checked{% endif %}
+                       onchange="toggleFreq()">
+                <span style="font-size:13px">This is a recurring deadline</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group" id="freq-group" style="{% if not (reminder and reminder.is_recurring) %}display:none{% endif %}">
+            <label>Frequency</label>
+            <select name="frequency">
+              <option value="">— select —</option>
+              {% for f in ['Monthly', 'Quarterly', 'Yearly'] %}
+              <option value="{{ f }}" {% if reminder and reminder.frequency == f %}selected{% endif %}>{{ f }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group full">
+            <label>IRS / Gov Link (optional)</label>
+            <input type="url" name="url"
+                   value="{{ reminder.url if reminder else '' }}"
+                   placeholder="https://www.irs.gov/...">
+          </div>
+
+          <div class="form-group full">
+            <label>Notes</label>
+            <textarea name="notes" rows="2" placeholder="Optional">{{ reminder.notes if reminder else '' }}</textarea>
+          </div>
+
+          <div class="form-group full flex gap-8">
+            <button type="submit" class="btn btn-primary">
+              {% if reminder %}💾 Save Changes{% else %}➕ Add Reminder{% endif %}
+            </button>
+            <a href="/tax" class="btn btn-outline">Cancel</a>
+            {% if reminder %}
+            <button type="button" class="btn btn-danger" style="margin-left:auto"
+                    onclick="if(confirm('Delete this reminder?')) { fetch('/api/reminders/{{ reminder.id }}/delete',{method:'POST'}).then(()=>window.location='/tax'); }">
+              🗑 Delete
+            </button>
+            {% endif %}
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Quick-add standard deadlines -->
+  {% if not reminder %}
+  <div class="card" style="margin-top:12px">
+    <div class="card-header"><span class="card-title">Quick Add — Common Deadlines</span></div>
+    <div class="card-body">
+      <p class="text-dim" style="font-size:12px;margin-bottom:10px">Click to pre-fill the form above.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">
+        {% set quick = [
+          ('Form 941 - Q1', '04-30'),
+          ('Form 941 - Q2', '07-31'),
+          ('Form 941 - Q3', '10-31'),
+          ('Form 941 - Q4', '01-31'),
+          ('Q1 Estimated Tax (Federal)', '04-15'),
+          ('Q2 Estimated Tax (Federal)', '06-16'),
+          ('Q3 Estimated Tax (Federal)', '09-15'),
+          ('Q4 Estimated Tax (Federal)', '01-15'),
+          ('W-2s to employees', '01-31'),
+          ('1099-NEC to contractors', '01-31'),
+          ('Form 940 - Annual FUTA', '01-31'),
+          ('Deposit FUTA tax', '07-31'),
+        ] %}
+        {% for label, mmdd in quick %}
+        <button class="btn btn-outline btn-xs"
+                onclick="prefill('{{ label }}', '{{ today[:4] }}-{{ mmdd }}')">{{ label }}</button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleFreq() {
+  const cb  = document.getElementById('is-recurring');
+  const grp = document.getElementById('freq-group');
+  if (grp) grp.style.display = cb.checked ? '' : 'none';
+}
+
+function prefill(desc, date) {
+  document.querySelector('[name=task_description]').value = desc;
+  document.querySelector('[name=due_date]').value = date;
+  document.querySelector('[name=task_description]').focus();
+  window.scrollTo({top: 0, behavior: 'smooth'});
+}
+
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); document.getElementById('rem-form').submit(); }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% block title %}Clients — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}Clients{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Clients{% endblock %}
+
+{% block content %}
+<style>
+#clients-table { width:100%; border-collapse:collapse; font-size:12px; }
+#clients-table thead th {
+  position:sticky; top:0; background:var(--surface);
+  z-index:5; box-shadow:0 1px 0 var(--border);
+  padding:7px 10px; text-align:left; font-size:11px;
+  color:var(--text-dim); white-space:nowrap; cursor:pointer; user-select:none;
+}
+#clients-table thead th:hover { color:var(--text-bright); }
+#clients-table thead th.sort-asc::after  { content:' ▲'; font-size:9px; color:var(--accent); }
+#clients-table thead th.sort-desc::after { content:' ▼'; font-size:9px; color:var(--accent); }
+#clients-table tbody tr.data-row { border-bottom:1px solid var(--border); transition:background .1s; }
+#clients-table tbody tr.data-row:hover { background:rgba(255,255,255,.03); }
+#clients-table td { padding:6px 10px; vertical-align:middle; }
+.phone-stack,.email-stack { display:flex; flex-direction:column; gap:1px; }
+.phone-stack span { font-family:monospace; font-size:11px; color:var(--text-dim); }
+.email-stack a { font-size:11px; color:var(--text-dim); text-decoration:none; }
+.email-stack a:hover { color:var(--accent); }
+.addr-cell { font-size:11px; color:var(--text-dim); line-height:1.5; }
+/* contact card expansion */
+.contact-card-row { display:none; }
+.contact-card-row.open { display:table-row; }
+.contact-card-inner {
+  padding:14px 20px; display:flex; gap:20px; align-items:flex-start;
+  background:var(--accent-dim); border-bottom:2px solid var(--accent);
+}
+.copy-block {
+  background:var(--surface); border:1px solid var(--border); border-radius:6px;
+  padding:12px 16px; font-size:12px; line-height:2; min-width:200px;
+  white-space:pre; font-family:'Consolas','Courier New',monospace;
+  color:var(--text-bright); flex-shrink:0; max-width:280px;
+}
+.contact-card-info {
+  flex:1; display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:10px; align-content:start;
+}
+.info-group label {
+  display:block; color:var(--text-dim); font-size:10px;
+  text-transform:uppercase; letter-spacing:.05em; margin-bottom:2px;
+}
+.info-group span, .info-group a { font-size:12px; color:var(--text-bright); }
+.info-group a { color:var(--accent); text-decoration:none; }
+#copy-flash {
+  position:fixed; bottom:24px; right:24px; z-index:9999;
+  background:var(--green); color:#000; padding:8px 16px;
+  border-radius:6px; font-size:12px; font-weight:600;
+  opacity:0; transition:opacity .2s; pointer-events:none;
+}
+#copy-flash.show { opacity:1; }
+</style>
+
+<div class="section-header">
+  <h2>Client Database</h2>
+  <div class="actions">
+    <a href="/clients/new" class="btn btn-primary">+ New Client</a>
+  </div>
+</div>
+
+<!-- Search & Filter -->
+<div class="card" style="margin-bottom:14px">
+  <div class="card-body" style="padding:12px">
+    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="flex:1;min-width:200px;margin:0">
+        <label>Search</label>
+        <input type="search" name="q" value="{{ q }}"
+               placeholder="Name, ID, phone, email, address…" class="search">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Status</label>
+        <select name="status">
+          <option value="">All</option>
+          <option value="Active"   {% if status_filter=='Active'   %}selected{% endif %}>Active</option>
+          <option value="Prospect" {% if status_filter=='Prospect' %}selected{% endif %}>Prospect</option>
+          <option value="Archived" {% if status_filter=='Archived' %}selected{% endif %}>Archived</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
+      {% if q or status_filter %}
+        <a href="/clients" class="btn btn-outline btn-sm">Clear</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">
+      {% if total %}{{ total }} client{{ 's' if total != 1 }}{% else %}No clients{% endif %}
+    </span>
+    <div class="card-actions">
+      {% if total %}<span class="text-dim" style="font-size:11px">Page {{ page }}/{{ pages }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="card-body no-pad">
+    {% if clients %}
+    <div class="table-wrap" style="overflow-x:auto">
+      <table id="clients-table">
+        <thead>
+          <tr>
+            <th data-col="customer_id">Client ID</th>
+            <th data-col="full_name" class="sort-asc">Name</th>
+            <th data-col="address">Address</th>
+            <th data-col="phone1">Phones</th>
+            <th data-col="email1">Emails</th>
+            <th data-col="status">Status</th>
+            <th data-col="total_invoiced" style="text-align:right">Invoiced</th>
+            <th data-col="total_paid"     style="text-align:right">Paid</th>
+            <th data-col="job_count"      style="text-align:center">Jobs</th>
+            <th data-col="last_invoice_date">Last Inv.</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in clients %}
+          <tr class="data-row" id="cr-{{ c.id }}">
+            <td><a href="/clients/{{ c.id }}" class="text-accent mono"
+                   style="text-decoration:none;font-weight:600;font-size:11px">
+                {{ c.customer_id or '—' }}</a></td>
+            <td><a href="/clients/{{ c.id }}"
+                   style="color:var(--text-bright);text-decoration:none;font-weight:500">
+                {{ c.full_name }}</a></td>
+            <td class="addr-cell">
+              {% if c.address %}{{ c.address }}<br>{% endif %}
+              {{ c.city_state_zip or ('—' if not c.address) }}
+            </td>
+            <td><div class="phone-stack">
+              {% if c.phone1 %}<span>{{ c.phone1 | fmt_phone }}</span>{% endif %}
+              {% if c.phone2 %}<span>{{ c.phone2 | fmt_phone }}</span>{% endif %}
+              {% if not c.phone1 and not c.phone2 %}<span>—</span>{% endif %}
+            </div></td>
+            <td><div class="email-stack">
+              {% if c.email1 %}<a href="mailto:{{ c.email1 }}">{{ c.email1 }}</a>{% endif %}
+              {% if c.email2 %}<a href="mailto:{{ c.email2 }}">{{ c.email2 }}</a>{% endif %}
+              {% if not c.email1 and not c.email2 %}<span class="text-dim">—</span>{% endif %}
+            </div></td>
+            <td><span class="badge badge-{% if c.status=='Active' %}green{% elif c.status=='Prospect' %}blue{% else %}gray{% endif %}">
+              {{ c.status or 'Active' }}</span></td>
+            <td class="amount">{% if c.total_invoiced %}${{ '{:,.2f}'.format(c.total_invoiced) }}{% else %}—{% endif %}</td>
+            <td class="amount text-green">{% if c.total_paid %}${{ '{:,.2f}'.format(c.total_paid) }}{% else %}—{% endif %}</td>
+            <td style="text-align:center">
+              {% if c.job_count %}<span class="badge badge-blue">{{ c.job_count }}</span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td class="dim mono" style="font-size:10px">{{ c.last_invoice_date or '—' }}</td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-outline btn-xs"
+                      onclick="toggleCard({{ c.id }},this)">Edit</button>
+              <a href="/clients/{{ c.id }}/edit" class="btn btn-outline btn-xs" title="Edit">✏️</a>
+              <form method="POST" action="/clients/{{ c.id }}/delete" style="display:inline"
+                    onsubmit="return confirm('Archive {{ c.full_name|replace("'","\\'")|replace('"','') }}?')">
+                <button type="submit" class="btn btn-danger btn-xs">🗑</button>
+              </form>
+            </td>
+          </tr>
+          {# ── contact card row ── #}
+          <tr class="contact-card-row" id="card-{{ c.id }}">
+            <td colspan="11">
+              <div class="contact-card-inner">
+                {# copy-paste block: digits-only phones #}
+                <div>
+                  <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;
+                               text-transform:uppercase;letter-spacing:.05em">📋 Copy Card</div>
+                  <div class="copy-block" id="ctext-{{ c.id }}">{{ c.full_name }}{% if c.address %}
+{{ c.address }}{% endif %}{% if c.city_state_zip %}
+{{ c.city_state_zip }}{% endif %}{% if c.phone1 %}
+{{ c.phone1 | digits_only }}{% endif %}{% if c.phone2 %}
+{{ c.phone2 | digits_only }}{% endif %}{% if c.email1 %}
+{{ c.email1 }}{% endif %}{% if c.email2 %}
+{{ c.email2 }}{% endif %}</div>
+                  <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+                    <button class="btn btn-primary btn-xs" onclick="copyCard({{ c.id }})">📋 Copy</button>
+                    <a href="/clients/{{ c.id }}/edit" class="btn btn-outline btn-xs">✏️ Edit Record</a>
+                    <a href="/clients/{{ c.id }}"      class="btn btn-outline btn-xs">🔍 Full Detail</a>
+                  </div>
+                </div>
+                {# structured info #}
+                <div class="contact-card-info">
+                  <div class="info-group"><label>Client ID</label>
+                    <span class="mono">{{ c.customer_id or '—' }}</span></div>
+                  <div class="info-group"><label>Year Acquired</label>
+                    <span>{{ c.year_acquired or '—' }}</span></div>
+                  <div class="info-group"><label>Address</label>
+                    <span>{% if c.address %}{{ c.address }},{% endif %} {{ c.city_state_zip or '—' }}</span></div>
+                  <div class="info-group"><label>Phone 1</label>
+                    <span class="mono">{{ c.phone1 | fmt_phone if c.phone1 else '—' }}</span></div>
+                  <div class="info-group"><label>Phone 2</label>
+                    <span class="mono">{{ c.phone2 | fmt_phone if c.phone2 else '—' }}</span></div>
+                  <div class="info-group"><label>Email 1</label>
+                    <span>{% if c.email1 %}<a href="mailto:{{ c.email1 }}">{{ c.email1 }}</a>{% else %}—{% endif %}</span></div>
+                  <div class="info-group"><label>Email 2</label>
+                    <span>{% if c.email2 %}<a href="mailto:{{ c.email2 }}">{{ c.email2 }}</a>{% else %}—{% endif %}</span></div>
+                  <div class="info-group"><label>Status</label>
+                    <span>{{ c.status or 'Active' }}</span></div>
+                  {% if c.notes %}
+                  <div class="info-group" style="grid-column:1/-1"><label>Notes</label>
+                    <span>{{ c.notes }}</span></div>
+                  {% endif %}
+                  {% if c.total_invoiced or c.job_count %}
+                  <div class="info-group"><label>Invoiced</label>
+                    <span>${{ '{:,.2f}'.format(c.total_invoiced or 0) }}</span></div>
+                  <div class="info-group"><label>Paid</label>
+                    <span style="color:var(--green)">${{ '{:,.2f}'.format(c.total_paid or 0) }}</span></div>
+                  <div class="info-group"><label>Jobs</label>
+                    <span>{{ c.job_count or 0 }}</span></div>
+                  {% endif %}
+                </div>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if pages > 1 %}
+    <div class="flex gap-8" style="padding:12px;justify-content:center">
+      {% if page > 1 %}<a href="?page={{ page-1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">← Prev</a>{% endif %}
+      <span class="text-dim" style="align-self:center">Page {{ page }} of {{ pages }}</span>
+      {% if page < pages %}<a href="?page={{ page+1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">Next →</a>{% endif %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty-state">
+      <div class="icon">👥</div>
+      {% if q %}<p>No clients matching "{{ q }}"</p>
+        <a href="/clients" class="btn btn-outline btn-sm mt-8">Clear search</a>
+      {% else %}<p>No clients yet.</p>
+        <a href="/clients/new" class="btn btn-primary mt-8">Add Your First Client</a>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+<div id="copy-flash">✓ Copied to clipboard</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let openCardId = null;
+
+function toggleCard(id, btn) {
+  const card = document.getElementById('card-' + id);
+  if (!card) return;
+  const isOpen = card.classList.contains('open');
+  // close previous
+  if (openCardId && openCardId !== id) {
+    const prev = document.getElementById('card-' + openCardId);
+    if (prev) prev.classList.remove('open');
+    const pr = document.getElementById('cr-' + openCardId);
+    if (pr) { const pb = pr.querySelector('button[onclick^="toggleCard"]'); if (pb) pb.textContent = 'Edit'; }
+  }
+  if (isOpen) {
+    card.classList.remove('open'); btn.textContent = 'Edit'; openCardId = null;
+  } else {
+    card.classList.add('open'); btn.textContent = '✕ Close'; openCardId = id;
+    card.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+}
+
+function copyCard(id) {
+  const el = document.getElementById('ctext-' + id);
+  if (!el) return;
+  const text = el.textContent.trim();
+  const flash = document.getElementById('copy-flash');
+  navigator.clipboard.writeText(text).then(() => {
+    flash.classList.add('show'); setTimeout(() => flash.classList.remove('show'), 2000);
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    flash.classList.add('show'); setTimeout(() => flash.classList.remove('show'), 2000);
+  });
+}
+
+// close on outside click
+document.addEventListener('click', function(e) {
+  if (!openCardId) return;
+  const card = document.getElementById('card-' + openCardId);
+  const row  = document.getElementById('cr-'   + openCardId);
+  if (card && !card.contains(e.target) && row && !row.contains(e.target)) {
+    card.classList.remove('open');
+    const b = row.querySelector('button[onclick^="toggleCard"]');
+    if (b) b.textContent = 'Edit';
+    openCardId = null;
+  }
+});
+
+// ── client-side sort ──────────────────────────────────────
+let sortCol = 'full_name', sortDir = 'asc';
+function sortTable(col) {
+  sortDir = (sortCol === col && sortDir === 'asc') ? 'desc' : 'asc';
+  sortCol = col;
+  document.querySelectorAll('#clients-table thead th').forEach(th => {
+    th.classList.remove('sort-asc','sort-desc');
+    if (th.dataset.col === col) th.classList.add('sort-' + sortDir);
+  });
+  const tbody = document.querySelector('#clients-table tbody');
+  const ths   = Array.from(document.querySelectorAll('#clients-table thead th'));
+  const colIdx = ths.findIndex(th => th.dataset.col === col);
+  const rows  = Array.from(tbody.querySelectorAll('tr.data-row'));
+  rows.sort((a, b) => {
+    const av = a.querySelectorAll('td')[colIdx]?.textContent.trim() || '';
+    const bv = b.querySelectorAll('td')[colIdx]?.textContent.trim() || '';
+    const an = parseFloat(av.replace(/[^0-9.-]/g,''));
+    const bn = parseFloat(bv.replace(/[^0-9.-]/g,''));
+    if (!isNaN(an) && !isNaN(bn)) return sortDir==='asc' ? an-bn : bn-an;
+    return sortDir==='asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+  });
+  rows.forEach(row => {
+    const id   = row.id.replace('cr-','');
+    const card = document.getElementById('card-' + id);
+    tbody.appendChild(row);
+    if (card) tbody.appendChild(card);
+  });
+}
+document.querySelectorAll('#clients-table thead th[data-col]').forEach(th => {
+  th.addEventListener('click', () => sortTable(th.dataset.col));
+});
+
+// keyboard shortcut
+document.addEventListener('keydown', e => {
+  if (e.key==='n' && document.activeElement.tagName !== 'INPUT') location.href='/clients/new';
+});
+</script>
+{% endblock %}

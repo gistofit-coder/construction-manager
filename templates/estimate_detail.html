@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+{% block title %}{{ est.estimate_number }} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📋 {{ est.estimate_number }}{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/estimates">Estimates</a> / {{ est.estimate_number }}{% endblock %}
+
+{% block content %}
+<!-- ── Header ── -->
+<div class="flex gap-8" style="margin-bottom:16px;align-items:flex-start;flex-wrap:wrap">
+  <div>
+    <div style="font-size:20px;font-weight:800">{{ est.estimate_number }}</div>
+    <div class="text-dim" style="font-size:12px">
+      {{ est.estimate_date }} ·
+      {% if est.client_name %}{{ est.client_name }} · {% endif %}
+      {% if est.job_code %}<span class="badge badge-blue">{{ est.job_code }}</span>{% endif %}
+      {% set sc = {'Draft':'gray','Sent':'blue','Accepted':'green','Rejected':'red','Revised':'yellow'} %}
+      <span class="badge badge-{{ sc.get(est.status, 'gray') }}" style="font-size:11px">{{ est.status }}</span>
+      <span class="badge badge-gray" style="font-size:10px">v{{ est.version_number or 1 }}</span>
+    </div>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    <!-- Status actions -->
+    {% if est.status == 'Draft' %}
+    <button class="btn btn-outline btn-sm" onclick="setStatus('Sent')">📤 Mark Sent</button>
+    {% elif est.status == 'Sent' %}
+    <button class="btn btn-success btn-sm" onclick="setStatus('Accepted')">✅ Accept</button>
+    <button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="setStatus('Rejected')">❌ Reject</button>
+    {% elif est.status == 'Accepted' %}
+    <button class="btn btn-success btn-sm" onclick="convertToInvoice()">🧾 Convert to Invoice</button>
+    {% endif %}
+    <button class="btn btn-outline btn-sm" onclick="reviseEstimate()">🔄 Revise</button>
+    <a href="/estimates/{{ est.id }}/actuals" class="btn btn-outline btn-sm">📊 vs Actuals</a>
+    <a href="/estimates/{{ est.id }}/pdf" target="_blank" class="btn btn-outline btn-sm">🖨 PDF (Internal)</a>
+    <a href="/estimates/{{ est.id }}/pdf?customer=1" target="_blank" class="btn btn-outline btn-sm">📄 Customer PDF</a>
+    {% if est.status in ['Draft','Revised'] %}
+    <a href="/estimates/{{ est.id }}/edit" class="btn btn-primary btn-sm">✏️ Edit</a>
+    {% endif %}
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:start">
+
+  <!-- ── Left ── -->
+  <div>
+    <!-- Line Items -->
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">Line Items</span></div>
+      <div class="card-body no-pad">
+        <table style="min-width:700px">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th style="text-align:right;width:80px">Labor Hrs</th>
+              <th style="text-align:right;width:90px">Labor $</th>
+              <th style="text-align:right;width:90px">Materials</th>
+              <th style="text-align:right;width:80px">Subs</th>
+              <th style="text-align:right;width:80px">Other</th>
+              <th style="text-align:right;width:90px">Total Cost</th>
+              <th style="text-align:right;width:90px">Sell Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for li in line_items %}
+            <tr>
+              <td style="font-weight:500;font-size:12px">{{ li.category }}</td>
+              <td style="text-align:right" class="mono text-dim">{{ '%.2f'|format(li.labor_hours_estimated|float) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(li.labor_cost|float) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(li.materials_cost|float) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(li.subcontractor_cost|float) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(li.other_cost|float) }}</td>
+              <td style="text-align:right;font-weight:600" class="mono">${{ '{:,.2f}'.format(li.total_cost|float) }}</td>
+              <td style="text-align:right;font-weight:700;color:var(--green)" class="mono">
+                {% if li.sell_price %}${{ '{:,.2f}'.format(li.sell_price|float) }}{% else %}—{% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="8" class="text-dim" style="text-align:center;padding:20px">No line items.</td></tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr style="background:var(--bg);font-weight:700;font-size:12px">
+              <td>TOTALS</td>
+              <td style="text-align:right" class="mono">{{ '%.2f'|format(line_items|sum(attribute='labor_hours_estimated')) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(totals.total_labor) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(totals.total_materials) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(totals.total_subs) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(totals.total_other) }}</td>
+              <td style="text-align:right" class="mono">${{ '{:,.2f}'.format(totals.total_direct) }}</td>
+              <td style="text-align:right;color:var(--green)" class="mono">${{ '{:,.2f}'.format(totals.total_sell_lines) }}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    {% if est.notes %}
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-header"><span class="card-title">Notes & Scope</span></div>
+      <div class="card-body" style="font-size:13px;white-space:pre-wrap">{{ est.notes }}</div>
+    </div>
+    {% endif %}
+
+    <!-- Version History -->
+    {% if versions|length > 1 %}
+    <div class="card">
+      <div class="card-header"><span class="card-title">Version History</span></div>
+      <div class="card-body no-pad">
+        <table>
+          <thead><tr><th>Estimate #</th><th>Version</th><th>Date</th><th>Total</th><th>Status</th><th></th></tr></thead>
+          <tbody>
+            {% for v in versions %}
+            <tr {% if v.id == est.id %}style="background:var(--bg)"{% endif %}>
+              <td class="mono" style="font-size:11px">{{ v.estimate_number }}</td>
+              <td style="text-align:center"><span class="badge badge-gray">v{{ v.version_number }}</span></td>
+              <td class="mono text-dim" style="font-size:11px">{{ v.estimate_date }}</td>
+              <td class="mono">${{ '{:,.2f}'.format(v.total_estimate or 0) }}</td>
+              <td><span class="badge badge-{{ {'Draft':'gray','Sent':'blue','Accepted':'green','Rejected':'red','Revised':'yellow'}.get(v.status,'gray') }}" style="font-size:9px">{{ v.status }}</span></td>
+              <td>{% if v.id != est.id %}<a href="/estimates/{{ v.id }}" class="btn btn-xs btn-outline">View</a>{% else %}<span class="text-dim" style="font-size:10px">current</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ── Right: Cost Summary ── -->
+  <div style="position:sticky;top:16px">
+    <div class="card">
+      <div class="card-header"><span class="card-title">Cost Summary</span></div>
+      <div class="card-body" style="font-size:12px">
+        {% macro row(label, val, bold=false, color='', dim=false) %}
+        <div class="flex" style="justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)">
+          <span {% if dim %}class="text-dim"{% endif %}>{{ label }}</span>
+          <span class="mono" style="{% if bold %}font-weight:700;{% endif %}{% if color %}color:{{ color }};{% endif %}">
+            ${{ '{:,.2f}'.format(val) }}
+          </span>
+        </div>
+        {% endmacro %}
+        {{ row('Labor',          totals.total_labor,       dim=true) }}
+        {{ row('Materials',      totals.total_materials,   dim=true) }}
+        {{ row('Subcontractors', totals.total_subs,        dim=true) }}
+        {{ row('Other',          totals.total_other,       dim=true) }}
+        {{ row('Direct Costs',   totals.total_direct,      bold=true) }}
+        <div style="height:4px"></div>
+        {{ row('+ Overhead ({}%)'.format(est.overhead_pct|round(1)),    totals.overhead_amt,    dim=true) }}
+        {{ row('+ Insurance ({}%)'.format(est.insurance_pct|round(1)),  totals.insurance_amt,   dim=true) }}
+        {{ row('+ Owner Wages ({}%)'.format(est.owner_wages_pct|round(1)), totals.owner_wages_amt, dim=true) }}
+        {{ row('+ Profit ({}%)'.format(est.profit_pct|round(1)),        totals.profit_amt,      dim=true) }}
+        <div style="padding:12px 0 4px">
+          <div class="flex" style="justify-content:space-between;font-size:18px;font-weight:900">
+            <span>TOTAL</span>
+            <span class="mono" style="color:var(--green)">${{ '{:,.2f}'.format(totals.total_estimate) }}</span>
+          </div>
+        </div>
+        {% if est.job_code %}
+        <a href="/estimates/{{ est.id }}/actuals" class="btn btn-outline btn-sm" style="width:100%;margin-top:10px;text-align:center">
+          📊 View Actuals vs Budget
+        </a>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if est.client_name or est.address %}
+    <div class="card" style="margin-top:10px">
+      <div class="card-header"><span class="card-title">Client</span></div>
+      <div class="card-body" style="font-size:12px;line-height:1.8">
+        <strong>{{ est.client_name }}</strong>{% if est.address %}<br>{{ est.address }}{% endif %}
+        {% if est.phone1 %}<br>📞 {{ est.phone1 }}{% endif %}
+        {% if est.email1 %}<br>✉ {{ est.email1 }}{% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function setStatus(status) {
+  const res  = await fetch('/api/estimates/{{ est.id }}/status', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({status})
+  });
+  const data = await res.json();
+  if (data.success) { showToast(`Status → ${data.status}`, 'success'); setTimeout(() => window.location.reload(), 600); }
+  else showToast(data.error || 'Failed', 'error');
+}
+
+async function reviseEstimate() {
+  if (!confirm('Create a new revision of this estimate?')) return;
+  const res  = await fetch('/api/estimates/{{ est.id }}/revise', {
+    method: 'POST', headers: {'Content-Type':'application/json'}
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast(`New revision: ${data.estimate_number}`, 'success');
+    setTimeout(() => window.location = `/estimates/${data.new_estimate_id}`, 700);
+  } else showToast(data.error || 'Failed', 'error');
+}
+
+async function convertToInvoice() {
+  if (!confirm('Convert this estimate to an invoice?')) return;
+  const res  = await fetch('/api/estimates/{{ est.id }}/convert-to-invoice', {
+    method: 'POST', headers: {'Content-Type':'application/json'}
+  });
+  const data = await res.json();
+  if (data.success) {
+    showToast(`Invoice #${data.invoice_number} created!`, 'success');
+    setTimeout(() => window.location = `/invoices/${data.invoice_id}`, 700);
+  } else showToast(data.error || 'Failed', 'error');
+}
+</script>
+{% endblock %}

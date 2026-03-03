@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Reconciliation Sessions — {{ acct.account_name }}{% endblock %}
+{% block topbar_title %}📋 Reconciliation Sessions{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reconciliation">Bank Recon</a> / <a href="/reconciliation/{{ acct.id }}">{{ acct.account_name }}</a> / Sessions{% endblock %}
+
+{% block content %}
+
+{% set complete = sessions | selectattr('status','equalto','Complete') | list %}
+{% set in_progress = sessions | rejectattr('status','equalto','Complete') | list %}
+{% set last = complete[0] if complete else none %}
+
+<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+  <div class="kpi-tile">
+    <div class="kpi-label">Total Sessions</div>
+    <div class="kpi-value">{{ sessions|length }}</div>
+    <div class="kpi-sub">all time</div>
+  </div>
+  <div class="kpi-tile green">
+    <div class="kpi-label">Complete</div>
+    <div class="kpi-value text-green">{{ complete|length }}</div>
+    <div class="kpi-sub">fully reconciled</div>
+  </div>
+  <div class="kpi-tile yellow">
+    <div class="kpi-label">In Progress</div>
+    <div class="kpi-value text-yellow">{{ in_progress|length }}</div>
+    <div class="kpi-sub">open sessions</div>
+  </div>
+  <div class="kpi-tile">
+    <div class="kpi-label">Last Reconciled</div>
+    <div class="kpi-value mono" style="font-size:18px">
+      {{ last.statement_end_date or last.session_date if last else '—' }}
+    </div>
+    <div class="kpi-sub">
+      {% if last and last.difference is not none %}
+        Diff: <span class="{{ 'text-red' if (last.difference|float)|abs > 0.01 else 'text-green' }}">${{ '{:,.2f}'.format((last.difference or 0)|float|abs) }}</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start">
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Session History — {{ acct.account_name }}</span>
+      <div class="card-actions">
+        <a href="/reconciliation/{{ acct.id }}" class="btn btn-outline btn-sm">← Account View</a>
+      </div>
+    </div>
+    <div class="card-body no-pad">
+      {% if sessions %}
+      <table>
+        <thead>
+          <tr>
+            <th>Session Date</th>
+            <th>Stmt End</th>
+            <th style="text-align:right">Stmt Balance</th>
+            <th style="text-align:right">Computed</th>
+            <th style="text-align:right">Difference</th>
+            <th>Transactions</th>
+            <th>Status</th>
+            <th>Notes</th>
+            <th style="width:70px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sessions %}
+          {% set diff = (s.difference or 0)|float %}
+          {% set is_clean = diff|abs < 0.01 %}
+          <tr class="{% if s.status == 'In-Progress' %}row-warning{% endif %}">
+            <td class="mono text-dim" style="font-size:11px">{{ s.session_date }}</td>
+            <td class="mono" style="font-size:12px;font-weight:600">{{ s.statement_end_date or '—' }}</td>
+            <td style="text-align:right" class="mono">${{ '{:,.2f}'.format((s.statement_ending_balance or 0)|float) }}</td>
+            <td style="text-align:right" class="mono text-dim">${{ '{:,.2f}'.format((s.computed_balance or 0)|float) }}</td>
+            <td style="text-align:right;font-weight:700" class="mono
+              {% if s.status == 'Complete' %}{{ 'text-green' if is_clean else 'text-red' }}{% else %}text-dim{% endif %}">
+              {% if s.status == 'Complete' %}
+                {{ '✓' if is_clean else '' }} ${{ '{:,.2f}'.format(diff|abs) }}
+              {% else %}—{% endif %}
+            </td>
+            <td style="font-size:11px;min-width:100px">
+              {% if s.tx_count %}
+                <div style="display:flex;align-items:center;gap:6px">
+                  <div style="flex:1;background:var(--border);border-radius:3px;height:6px">
+                    <div style="background:var(--green);height:6px;border-radius:3px;width:{{ s.match_pct or 0 }}%"></div>
+                  </div>
+                  <span class="text-dim" style="white-space:nowrap">{{ s.tx_matched or 0 }}/{{ s.tx_count }}</span>
+                </div>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </td>
+            <td>
+              <span class="badge {% if s.status == 'Complete' %}badge-green{% else %}badge-yellow{% endif %}" style="font-size:9px">
+                {{ s.status }}
+              </span>
+            </td>
+            <td class="text-dim" style="font-size:11px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ s.notes or '' }}">
+              {{ s.notes[:35] if s.notes else '' }}
+            </td>
+            <td>
+              <a href="/reconciliation/{{ acct.id }}/session/{{ s.id }}" class="btn btn-outline btn-xs">
+                {{ '▶ Open' if s.status != 'Complete' else 'View' }}
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div style="padding:40px;text-align:center" class="text-dim">
+        <div style="font-size:28px;margin-bottom:8px">📋</div>
+        No reconciliation sessions yet for this account.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-header"><span class="card-title">▶ Start New Session</span></div>
+      <div class="card-body">
+        <form method="POST">
+          <div class="form-group" style="margin-bottom:12px">
+            <label>Statement End Date <span class="req">*</span></label>
+            <input type="date" name="statement_end_date" required value="{{ today }}">
+          </div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label>Statement Ending Balance <span class="req">*</span></label>
+            <div style="position:relative">
+              <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-dim)">$</span>
+              <input type="number" name="statement_ending_balance" step="0.01" required style="padding-left:22px" placeholder="0.00">
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:14px">
+            <label>Notes <span class="tip">(optional)</span></label>
+            <input type="text" name="notes" placeholder="e.g. Jan 2026 Chase Checking">
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%">▶ Start Session</button>
+        </form>
+      </div>
+    </div>
+
+    {% if balance_history|length > 1 %}
+    <div class="card">
+      <div class="card-header"><span class="card-title">📈 Balance History</span></div>
+      <div class="card-body">
+        <canvas id="balanceChart" height="150"></canvas>
+        <div class="text-dim" style="font-size:10px;margin-top:6px;text-align:center">Statement ending balances over time</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if balance_history|length > 1 %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+const bh = {{ balance_history | tojson }};
+new Chart(document.getElementById('balanceChart'), {
+  type: 'line',
+  data: {
+    labels: bh.map(r => r.date),
+    datasets: [{
+      label: 'Stmt Balance',
+      data: bh.map(r => r.balance),
+      borderColor: '#3d85f5',
+      backgroundColor: 'rgba(61,133,245,0.08)',
+      tension: 0.3, pointRadius: 4, fill: true,
+    }]
+  },
+  options: {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { font:{size:10}, maxTicksLimit:8 } },
+      y: { ticks: { font:{size:10}, callback: v => '$' + v.toLocaleString() } }
+    }
+  }
+});
+</script>
+{% endif %}
+{% endblock %}

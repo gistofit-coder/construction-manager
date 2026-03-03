@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+{% block title %}Income Statement {{ year }} — {{ config.company_name or '' }}{% endblock %}
+{% block topbar_title %}📊 Income Statement{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / <a href="/reports">Reports</a> / Income Statement{% endblock %}
+
+{% block content %}
+<!-- Controls -->
+<div class="flex gap-8" style="margin-bottom:14px;align-items:center;flex-wrap:wrap">
+  <form method="GET" class="flex gap-8" style="align-items:center">
+    <select name="year" onchange="this.form.submit()" style="min-width:80px">
+      {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print / PDF</button>
+  </form>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     INCOME STATEMENT DOCUMENT
+═══════════════════════════════════════════════════════════ -->
+<div id="is-doc" style="background:#fff;color:#111;max-width:960px;margin:0 auto;padding:24px 32px;font-family:'Garamond','Georgia',serif;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.15)">
+
+  <!-- Header -->
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px">
+    <div>
+      <div style="font-weight:700;font-size:16px">{{ config.company_name or 'Knautz Builders LLC.' }}</div>
+    </div>
+    <div style="text-align:center;color:#555;font-size:12px">
+      {{ today_str }}
+    </div>
+    <div style="text-align:right;font-size:22px;font-weight:700;letter-spacing:-0.5px">Income Statement</div>
+  </div>
+
+  {% macro fmt(v) %}{% if v == 0 %}-{% else %}{{ '{:,.0f}'.format(v|abs) }}{% endif %}{% endmacro %}
+  {% macro row_class(v) %}{% if v < 0 %}color:#c00{% elif v > 0 %}color:#111{% else %}color:#999{% endif %}{% endmacro %}
+
+  <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+    <colgroup>
+      <col style="width:44%">
+      <col style="width:11%">
+      <col style="width:11%">
+      <col style="width:11%">
+      <col style="width:11%">
+      <col style="width:12%">
+    </colgroup>
+
+    <!-- Column headers -->
+    <thead>
+      <tr style="font-size:10px;color:#555;text-align:right">
+        <td></td>
+        <td style="text-align:center">Jan-Mar</td>
+        <td style="text-align:center">Apr-Jun</td>
+        <td style="text-align:center">Jul-Sep</td>
+        <td style="text-align:center">Oct-Dec</td>
+        <td></td>
+      </tr>
+      <tr>
+        <td style="background:#6b6b6b;color:#fff;font-weight:700;padding:5px 8px;font-size:13px">Revenue</td>
+        <td style="background:#4a4a4a;color:#fff;font-weight:700;text-align:center;padding:5px 4px;font-size:11px">1<sup>st</sup> Quarter</td>
+        <td style="background:#4a4a4a;color:#fff;font-weight:700;text-align:center;padding:5px 4px;font-size:11px">2<sup>nd</sup> Quarter</td>
+        <td style="background:#4a4a4a;color:#fff;font-weight:700;text-align:center;padding:5px 4px;font-size:11px">3<sup>rd</sup> Quarter</td>
+        <td style="background:#4a4a4a;color:#fff;font-weight:700;text-align:center;padding:5px 4px;font-size:11px">4<sup>th</sup> Quarter</td>
+        <td style="background:#c8a800;color:#111;font-weight:700;text-align:center;padding:5px 4px;font-size:13px">{{ year }}</td>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Gross Sales -->
+      <tr>
+        <td style="padding:3px 8px 3px 20px">Gross sales</td>
+        {% for v in gross_sales %}<td style="text-align:right;padding:3px 8px">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:3px 8px;font-weight:600">{{ fmt(gross_sales_yr) }}</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px 2px 20px;color:#555">(Less sales returns and allowances)</td>
+        {% for i in range(4) %}<td style="text-align:right;padding:2px 8px;color:#999">-</td>{% endfor %}
+        <td style="text-align:right;padding:2px 8px;color:#999">-</td>
+      </tr>
+      <!-- Net Sales -->
+      <tr style="border-top:1px solid #ccc;border-bottom:1px solid #ccc">
+        <td style="padding:5px 8px 5px 20px;font-weight:700">Net Sales</td>
+        {% for v in net_sales %}<td style="text-align:right;padding:5px 8px;font-weight:700">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:5px 8px;font-weight:700">{{ fmt(net_sales_yr) }}</td>
+      </tr>
+
+      <tr><td colspan="6" style="padding:6px 0"></td></tr>
+
+      <!-- COGS Header -->
+      <tr>
+        <td colspan="6" style="background:#6b6b6b;color:#fff;font-weight:700;padding:5px 8px;font-size:13px">Cost of Goods Sold</td>
+      </tr>
+      <tr>
+        <td style="padding:3px 8px 3px 20px;color:#555">Beginning inventory</td>
+        {% for i in range(4) %}<td style="text-align:right;padding:3px 8px;color:#999">-</td>{% endfor %}
+        <td style="text-align:right;padding:3px 8px;color:#999">-</td>
+      </tr>
+      <tr>
+        <td style="padding:3px 8px 3px 20px">Goods purchased</td>
+        {% for v in goods_purchased %}<td style="text-align:right;padding:3px 8px">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:3px 8px;font-weight:600">{{ fmt(goods_purchased_yr) }}</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px 2px 20px;color:#555">Goods manufactured: Raw materials</td>
+        {% for i in range(4) %}<td style="text-align:right;padding:2px 8px;color:#999">-</td>{% endfor %}
+        <td style="text-align:right;padding:2px 8px;color:#999">-</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px 2px 20px;color:#555">Goods manufactured: Direct Labor</td>
+        {% for i in range(4) %}<td style="text-align:right;padding:2px 8px;color:#999">-</td>{% endfor %}
+        <td style="text-align:right;padding:2px 8px;color:#999">-</td>
+      </tr>
+      <tr style="border-top:1px solid #ddd">
+        <td style="padding:3px 8px 3px 20px">Total Goods Available</td>
+        {% for v in total_goods %}<td style="text-align:right;padding:3px 8px">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:3px 8px;font-weight:600">{{ fmt(total_goods_yr) }}</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px 2px 20px;color:#555">(Less ending inventory)</td>
+        {% for i in range(4) %}<td style="text-align:right;padding:2px 8px;color:#999">-</td>{% endfor %}
+        <td style="text-align:right;padding:2px 8px;color:#999">-</td>
+      </tr>
+      <tr style="border-top:1px solid #ddd">
+        <td style="padding:3px 8px 3px 20px">Cost of Goods Sold</td>
+        {% for v in cogs %}<td style="text-align:right;padding:3px 8px">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:3px 8px;font-weight:600">{{ fmt(cogs_yr) }}</td>
+      </tr>
+
+      <tr><td colspan="6" style="padding:4px 0"></td></tr>
+
+      <!-- Gross Profit -->
+      <tr style="border-top:2px solid #555;border-bottom:2px solid #555">
+        <td style="padding:6px 8px 6px 20px;font-weight:700;font-size:13px">Gross Profit (Loss)</td>
+        {% for v in gross_profit %}
+        <td style="text-align:right;padding:6px 8px;font-weight:700;{{ row_class(v) }}">{{ fmt(v) }}</td>
+        {% endfor %}
+        <td style="text-align:right;padding:6px 8px;font-weight:700;{{ row_class(gross_profit_yr) }}">{{ fmt(gross_profit_yr) }}</td>
+      </tr>
+
+      <tr><td colspan="6" style="padding:6px 0"></td></tr>
+
+      <!-- Expenses Header -->
+      <tr>
+        <td colspan="6" style="background:#6b6b6b;color:#fff;font-weight:700;padding:5px 8px;font-size:13px">Expenses</td>
+      </tr>
+
+      {% for row in expense_rows %}
+      <tr>
+        <td style="padding:2px 8px 2px 20px">{{ row.label }}</td>
+        {% for v in row.q %}
+        <td style="text-align:right;padding:2px 8px;color:{% if v == 0 %}#999{% else %}#111{% endif %}">
+          {{ fmt(v) }}
+        </td>
+        {% endfor %}
+        <td style="text-align:right;padding:2px 8px;font-weight:{% if row.yr > 0 %}600{% else %}400{% endif %};color:{% if row.yr == 0 %}#999{% else %}#111{% endif %}">
+          {{ fmt(row.yr) }}
+        </td>
+      </tr>
+      {% endfor %}
+
+      <!-- Total Operating Expenses -->
+      <tr style="border-top:1px solid #ccc;border-bottom:1px solid #ccc">
+        <td style="padding:4px 8px 4px 20px;font-weight:600">Total Operating Expenses</td>
+        {% for v in total_opex %}<td style="text-align:right;padding:4px 8px;font-weight:600">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:4px 8px;font-weight:700">{{ fmt(total_opex_yr) }}</td>
+      </tr>
+
+      <tr><td colspan="6" style="padding:4px 0"></td></tr>
+
+      <!-- Operating Income -->
+      <tr style="border-top:2px solid #555;border-bottom:1px solid #555">
+        <td style="padding:6px 8px;font-weight:700;font-size:13px">Operating Income (Loss)</td>
+        {% for v in operating_income %}
+        <td style="text-align:right;padding:6px 8px;font-weight:700;{{ row_class(v) }}">{{ fmt(v) }}</td>
+        {% endfor %}
+        <td style="text-align:right;padding:6px 8px;font-weight:700;{{ row_class(operating_income_yr) }}">{{ fmt(operating_income_yr) }}</td>
+      </tr>
+
+      <!-- Below the line -->
+      <tr>
+        <td style="padding:3px 8px 3px 20px;color:#555">Non-operating revenues, expenses, gains, losses</td>
+        {% for i in range(4) %}<td style="text-align:right;padding:3px 8px;color:#999">-</td>{% endfor %}
+        <td style="text-align:right;padding:3px 8px;color:#999">-</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px 2px 20px;color:#555">(Less interest expense)</td>
+        {% for v in interest_expense %}<td style="text-align:right;padding:2px 8px;color:#999">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:2px 8px;color:#999">{{ fmt(interest_expense_yr) }}</td>
+      </tr>
+      <tr style="border-top:1px solid #ddd">
+        <td style="padding:3px 8px 3px 20px">Income Before Taxes</td>
+        {% for v in income_before_tax %}<td style="text-align:right;padding:3px 8px">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:3px 8px;font-weight:600">{{ fmt(income_before_tax_yr) }}</td>
+      </tr>
+      <tr>
+        <td style="padding:2px 8px 2px 20px;color:#555">(Less income tax expense)</td>
+        {% for v in income_tax %}<td style="text-align:right;padding:2px 8px;color:#999">{{ fmt(v) }}</td>{% endfor %}
+        <td style="text-align:right;padding:2px 8px;color:#999">{{ fmt(income_tax_yr) }}</td>
+      </tr>
+
+      <!-- Income from Continuing Operations -->
+      <tr style="border-top:2px solid #555">
+        <td style="padding:5px 8px;font-weight:700;font-size:13px">Income From Continuing Operations</td>
+        {% for v in income_before_tax %}
+        <td style="text-align:right;padding:5px 8px;font-weight:700;{{ row_class(v) }}">{{ fmt(v) }}</td>
+        {% endfor %}
+        <td style="text-align:right;padding:5px 8px;font-weight:700;{{ row_class(income_before_tax_yr) }}">{{ fmt(income_before_tax_yr) }}</td>
+      </tr>
+
+      <tr><td colspan="6" style="padding:6px 0"></td></tr>
+
+      <!-- Net Income -->
+      <tr style="background:#2c2c2c;color:#fff">
+        <td style="padding:8px 8px;font-weight:700;font-size:14px">Net Income</td>
+        {% for v in net_income %}
+        <td style="text-align:right;padding:8px 8px;font-weight:700;font-size:13px">{{ fmt(v) }}</td>
+        {% endfor %}
+        <td style="text-align:right;padding:8px 8px;font-weight:700;font-size:14px">{{ fmt(net_income_yr) }}</td>
+      </tr>
+
+    </tbody>
+  </table>
+
+  <div style="margin-top:20px;font-size:10px;color:#888;border-top:1px solid #ddd;padding-top:8px">
+    Generated {{ today_str }} — {{ config.company_name or '' }} — KBWeb
+    <span style="margin-left:16px">Revenue = "Income Received" ledger entries. COGS = ledger entries with is_cogs=1. Operating expenses = ledger entries by Schedule C category.</span>
+  </div>
+</div>
+
+<style>
+@media print {
+  #topbar, #sidebar, .btn, form { display:none !important; }
+  #is-doc { box-shadow:none; max-width:100%; padding:0; }
+  body { background:white; }
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Pass today's date from server or JS
+document.addEventListener('DOMContentLoaded', () => {
+  // today_str is rendered server-side
+});
+</script>
+{% endblock %}
