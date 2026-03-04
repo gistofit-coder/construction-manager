@@ -1,0 +1,25 @@
+// common.js — shared utilities for all pages
+
+function showToast(msg, type = 'success', duration = 4000) {
+  const container = document.getElementById('toast-container') || document.body.appendChild(Object.assign(document.createElement('div'), {id:'toast-container',style:'position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;'}));
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), duration);
+}
+
+function esc(s) {
+  return String(s || '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'})[m]);
+}
+
+function openModal(id) {
+  document.getElementById(id)?.classList.add('open');
+}
+
+function closeModal(id) {
+  document.getElementById(id)?.classList.remove('open');
+}
+
+// Add more shared helpers here later (patchField, filter system, etc.)
+console.log('common.js loaded');
