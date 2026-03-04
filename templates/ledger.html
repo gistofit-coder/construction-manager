@@ -6,27 +6,46 @@
 {% block content %}
 <style>
 .ledger-filter-bar {
-  position: sticky; top: var(--header-h, 48px); z-index: 20;
-  background: var(--bg); border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: var(--header-h, 48px);
+  z-index: 20;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
 }
+
 #ledger-table thead {
-  position: sticky; top: var(--header-h, 48px); z-index: 15;
+  position: sticky;
+  top: var(--header-h, 48px);
+  z-index: 15;
   background: var(--bg);
 }
+
 #ledger-table thead th {
-  background: var(--bg); box-shadow: 0 1px 0 var(--border);
+  background: var(--bg);
+  box-shadow: 0 1px 0 var(--border);
+  white-space: nowrap;
 }
+
 .table-totals-bar {
-  position: sticky; bottom: 0; z-index: 10;
-  background: var(--bg); border-top: 1px solid var(--border);
-  padding: 8px 14px; font-size: 12px; display: flex; justify-content: space-between;
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 8px 14px;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
 }
+
 .amt-income  { color: var(--green); font-weight: 600; font-family: monospace; }
 .amt-expense { color: var(--red);   font-weight: 600; font-family: monospace; }
+
 tr.is-transfer { opacity: 0.6; font-style: italic; }
 tr.is-pending  { border-left: 4px solid var(--yellow); }
 tr.dup-flagged { border-left: 4px solid var(--orange); }
 tr.dup-dismissed { opacity: 0.75; }
+
 .editable:hover { background: var(--accent-dim); cursor: pointer; }
 </style>
 
@@ -65,9 +84,20 @@ tr.dup-dismissed { opacity: 0.75; }
       <thead>
         <tr>
           <th style="width:40px"><input type="checkbox" id="select-all"></th>
-          <th>Date</th><th>Nickname</th><th>Job</th><th>Invoice</th><th>Category</th>
-          <th>Description</th><th>Vendor</th><th>Income</th><th>Expense</th>
-          <th>Type</th><th>Memo</th><th>Receipt</th><th>Verified</th><th>Actions</th>
+          <th>Date</th>
+          <th>Nickname</th>
+          <th>Job</th>
+          <th>Invoice</th>
+          <th>Category</th>
+          <th>Description</th>
+          <th>Vendor</th>
+          <th>Income</th>
+          <th>Expense</th>
+          <th>Type</th>
+          <th>Memo</th>
+          <th>Receipt</th>
+          <th>Verified</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -82,22 +112,22 @@ tr.dup-dismissed { opacity: 0.75; }
           <td>{{ row.description or '—' }}</td>
           <td>{{ row.vendor or '—' }}</td>
 
-          <!-- Improved income cell – always editable -->
-          <td class="col-cell" data-col="income" style="text-align:right">
+          <!-- Income - always editable -->
+          <td style="text-align:right">
             <span class="editable amt-income {% if row.amount <= 0 %}text-dim{% endif %}" 
                   data-field="amount" data-id="{{ row.id }}"
                   data-type="amount" data-sign="positive"
-                  title="Click to set/edit income (flips from expense if needed)">
+                  title="Click to set/edit income amount (flips sign if needed)">
               {% if row.amount > 0 %}${{ '{:,.2f}'.format(row.amount) }}{% else %}—{% endif %}
             </span>
           </td>
 
-          <!-- Improved expense cell – always editable -->
-          <td class="col-cell" data-col="expense" style="text-align:right">
+          <!-- Expense - always editable -->
+          <td style="text-align:right">
             <span class="editable amt-expense {% if row.amount >= 0 %}text-dim{% endif %}" 
                   data-field="amount" data-id="{{ row.id }}"
                   data-type="amount" data-sign="negative"
-                  title="Click to set/edit expense (flips from income if needed)">
+                  title="Click to set/edit expense amount (flips sign if needed)">
               {% if row.amount < 0 %}${{ '{:,.2f}'.format(row.amount|abs) }}{% else %}—{% endif %}
             </span>
           </td>
@@ -114,11 +144,7 @@ tr.dup-dismissed { opacity: 0.75; }
           <td>{{ '✅' if row.receipt_verified else '—' }}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-outline btn-xs" onclick="editRow({{ row.id }})">Edit</button>
-            <button class="btn btn-outline btn-xs" 
-                    onclick="duplicateRow({{ row.id }})" 
-                    title="Create a similar new entry (fast way to correct or repeat)">
-              Copy
-            </button>
+            <button class="btn btn-outline btn-xs" onclick="duplicateRow({{ row.id }})">Copy</button>
           </td>
         </tr>
         {% endfor %}
@@ -128,16 +154,15 @@ tr.dup-dismissed { opacity: 0.75; }
 </div>
 
 <script>
-// Duplicate row function – calls new endpoint
+// Duplicate function
 function duplicateRow(id) {
-  if (!confirm("Create a copy of this entry to edit?")) return;
-  
-  fetch(`/ledger/${id}/duplicate`, { method: 'POST' })
+  if (!confirm("Create a copy of this entry?")) return;
+  fetch(`/ledger/${id}/duplicate`, {method: 'POST'})
     .then(r => r.json())
     .then(d => {
       if (d.success) {
-        showToast('Entry duplicated — edit the new one', 'success');
-        location.reload();  // Refresh to show new row (can be optimized later)
+        showToast('Duplicated — refresh to see new row', 'success');
+        location.reload();
       } else {
         showToast(d.error || 'Failed', 'error');
       }
@@ -145,10 +170,9 @@ function duplicateRow(id) {
     .catch(() => showToast('Network error', 'error'));
 }
 
-// Placeholder for your existing editRow / other logic
+// Placeholder for edit (expand as needed)
 function editRow(id) {
-  // Your current edit logic here, or expand later
-  alert('Edit row ' + id + ' – expand this function as needed');
+  alert('Edit row ' + id + ' — implement full editor here or use inline');
 }
 </script>
 {% endblock %}
