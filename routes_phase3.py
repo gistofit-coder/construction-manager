@@ -2030,3 +2030,79 @@ def duplicate_ledger(row_id):
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
+
+# ── Duplicate row (called by Copy button) ────────────────────────
+@phase3.route('/<int:row_id>/duplicate', methods=['POST'])
+def duplicate_ledger(row_id):
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM ledger WHERE id = ?", (row_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "Entry not found"}), 404
+        
+        # Copy data, exclude ID and timestamps
+        data = dict(row)
+        data.pop('id', None)
+        data.pop('created_at', None)
+        data.pop('updated_at', None)
+        # Clear sensitive/unique fields
+        data['receipt_filename'] = None
+        data['receipt_verified'] = 0
+        data['invoice_number'] = None
+        
+        columns = ', '.join(data.keys())
+        placeholders = ', '.join(['?'] * len(data))
+        conn.execute(f"INSERT INTO ledger ({columns}) VALUES ({placeholders})", list(data.values()))
+        conn.commit()
+        
+        return jsonify({"success": True, "message": "Duplicated"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+# ── Improved patch (handles sign flip for amount) ─────────────────
+@phase3.route('/<int:row_id>/patch', methods=['POST'])
+def patch_ledger(row_id):
+    data = request.get_json()
+    field = data.get('field')
+    value = data.get('value')
+    sign_hint = data.get('sign')  # 'positive' or 'negative' from frontend
+
+    if not field:
+        return jsonify({"error": "Field required"}), 400
+
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM ledger WHERE id = ?", (row_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "Row not found"}), 404
+
+        # Special handling for amount flip
+        if field == 'amount':
+            try:
+                new_amount = float(value)
+                if sign_hint == 'positive' and new_amount < 0:
+                    new_amount = abs(new_amount)  # force positive
+                elif sign_hint == 'negative' and new_amount > 0:
+                    new_amount = -new_amount      # force negative
+                value = new_amount
+            except ValueError:
+                return jsonify({"error": "Invalid amount"}), 400
+
+        # Update field
+        conn.execute(f"UPDATE ledger SET {field} = ?, updated_at = datetime('now') WHERE id = ?",
+                     (value, row_id))
+        conn.commit()
+
+        # Return updated row for frontend
+        updated = conn.execute("SELECT * FROM ledger WHERE id = ?", (row_id,)).fetchone()
+        return jsonify({"success": True, "row": dict(updated)})
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+      
