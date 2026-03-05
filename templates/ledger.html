@@ -24,7 +24,6 @@
   background: var(--bg);
   box-shadow: 0 1px 0 var(--border);
   white-space: nowrap;
-  cursor: pointer;
 }
 
 .table-totals-bar {
@@ -47,7 +46,7 @@ tr.is-pending  { border-left: 4px solid var(--yellow); }
 tr.dup-flagged { border-left: 4px solid var(--orange); }
 tr.dup-dismissed { opacity: 0.75; }
 
-.editable:hover { background: var(--accent-dim); cursor: pointer; padding: 2px; border-radius: 3px; }
+.editable:hover { background: var(--accent-dim); cursor: pointer; }
 </style>
 
 <div class="ledger-filter-bar card">
@@ -113,20 +112,22 @@ tr.dup-dismissed { opacity: 0.75; }
           <td>{{ row.description or '—' }}</td>
           <td>{{ row.vendor or '—' }}</td>
 
+          <!-- Income - always editable -->
           <td style="text-align:right">
             <span class="editable amt-income {% if row.amount <= 0 %}text-dim{% endif %}" 
                   data-field="amount" data-id="{{ row.id }}"
                   data-type="amount" data-sign="positive"
-                  title="Click to set/edit income (flips from expense if needed)">
+                  title="Click to set/edit income amount (flips sign if needed)">
               {% if row.amount > 0 %}${{ '{:,.2f}'.format(row.amount) }}{% else %}—{% endif %}
             </span>
           </td>
 
+          <!-- Expense - always editable -->
           <td style="text-align:right">
             <span class="editable amt-expense {% if row.amount >= 0 %}text-dim{% endif %}" 
                   data-field="amount" data-id="{{ row.id }}"
                   data-type="amount" data-sign="negative"
-                  title="Click to set/edit expense (flips from income if needed)">
+                  title="Click to set/edit expense amount (flips sign if needed)">
               {% if row.amount < 0 %}${{ '{:,.2f}'.format(row.amount|abs) }}{% else %}—{% endif %}
             </span>
           </td>
@@ -153,7 +154,7 @@ tr.dup-dismissed { opacity: 0.75; }
 </div>
 
 <script>
-// Duplicate row function
+// Duplicate function
 function duplicateRow(id) {
   if (!confirm("Create a copy of this entry?")) return;
   fetch(`/ledger/${id}/duplicate`, {method: 'POST'})
@@ -169,9 +170,9 @@ function duplicateRow(id) {
     .catch(() => showToast('Network error', 'error'));
 }
 
-// Placeholder for editRow (expand later)
+// Placeholder for edit (expand as needed)
 function editRow(id) {
-  alert('Edit row ' + id + ' — implement modal or inline form here');
+  alert('Edit row ' + id + ' — implement full editor here or use inline');
 }
 </script>
 {% endblock %}
