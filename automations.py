@@ -411,7 +411,7 @@ def get_cert_status(end_date_str: str) -> dict:
             return {'status': 'Archived', 'color': 'gray', 'days': days}
         elif days < 0:
             return {'status': 'Expired', 'color': 'red', 'days': days}
-        elif days <= 30:
+        elif days <= 60:
             return {'status': f'Expiring in {days}d', 'color': 'yellow', 'days': days}
         else:
             return {'status': 'Current', 'color': 'green', 'days': days}
@@ -421,19 +421,28 @@ def get_cert_status(end_date_str: str) -> dict:
 
 def parse_cert_filename(filename: str) -> dict:
     """
-    Parse cert filename in format: 'CompanyName MM-DD-YY_MM-DD-YY.pdf'
+    Parse cert filename in format: 'CompanyName MM-DD-YY_MM-DD-YY' or
+    'CompanyName M-D-YYYY_M-D-YYYY'. Handles 1-2 digit months/days and
+    2 or 4 digit years.
     Returns dict with company_name, start_date, end_date.
     """
     base = os.path.splitext(filename)[0]
-    # Match date pattern at end
-    pattern = r'^(.+?)\s+(\d{2}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})$'
+    # Match 1-2 digit month, day, and 2 OR 4 digit year
+    pattern = r'^(.+?)\s+(\d{1,2}-\d{1,2}-\d{2,4})_(\d{1,2}-\d{1,2}-\d{2,4})$'
     m = re.match(pattern, base)
     if m:
         company = m.group(1).strip()
         def parse_date(s):
+            parts = s.split('-')
+            if len(parts) != 3:
+                return ''
+            mm, dd, yy = parts
             try:
-                return datetime.strptime(s, '%m-%d-%y').strftime('%Y-%m-%d')
-            except Exception:
+                yr = int(yy)
+                if yr < 100:          # 2-digit year
+                    yr += 2000 if yr < 50 else 1900
+                return f'{yr:04d}-{int(mm):02d}-{int(dd):02d}'
+            except (ValueError, TypeError):
                 return ''
         return {
             'company_name': company,

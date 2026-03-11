@@ -795,6 +795,13 @@ def init_db(db_path=None):
             "ALTER TABLE work_categories ADD COLUMN is_transfer INTEGER DEFAULT 0",
             # Phase 15: pending transactions
             "ALTER TABLE ledger ADD COLUMN is_pending INTEGER DEFAULT 0",
+            # Phase 16: company logo + app prefs
+            "ALTER TABLE company_config ADD COLUMN company_logo_path TEXT DEFAULT ''",
+            "ALTER TABLE company_config ADD COLUMN confirm_on_exit INTEGER DEFAULT 1",
+            # Phase 17: invoice paid date
+            "ALTER TABLE invoices ADD COLUMN paid_date TEXT DEFAULT ''",
+            # Phase 18: bank account statements folder path
+            "ALTER TABLE bank_accounts ADD COLUMN statements_folder_path TEXT DEFAULT ''",
         ]
         for sql in migrations:
             try:

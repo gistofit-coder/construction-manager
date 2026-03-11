@@ -58,22 +58,7 @@
       z-index: 100;
       overflow-y: auto;
     }
-    .sidebar-logo {
-      padding: 16px 14px 12px;
-      border-bottom: 1px solid var(--sidebar-border);
-    }
-    .sidebar-logo .company {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--text-bright);
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-    .sidebar-logo .tagline {
-      font-size: 10px;
-      color: var(--text-dim);
-      margin-top: 2px;
-    }
+
     .nav-section {
       padding: 8px 0;
     }
@@ -125,6 +110,7 @@
       border-top: 1px solid var(--sidebar-border);
       font-size: 10px;
       color: var(--text-dim);
+      flex-shrink: 0;
     }
 
     /* ===== MAIN CONTENT ===== */
@@ -568,90 +554,245 @@
   background: var(--bg);
   border-top: 1px solid var(--border);
 }
+    /* ── Backup progress overlay ── */
+    #backup-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 9990;
+      background: rgba(0,0,0,.65);
+      align-items: center; justify-content: center;
+    }
+    #backup-overlay.active { display: flex; }
+    #backup-overlay-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 28px 36px;
+      text-align: center;
+      min-width: 280px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.6);
+    }
+    #backup-overlay-box .bk-spinner {
+      font-size: 32px; display: block; margin-bottom: 12px;
+      animation: bk-spin 1.2s linear infinite;
+    }
+    @keyframes bk-spin { to { transform: rotate(360deg); } }
+
+    /* ── Import progress modal ── */
+    #import-modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 9992;
+      background: rgba(0,0,0,.65); align-items: center; justify-content: center;
+    }
+    #import-modal-overlay.active { display: flex; }
+    #import-modal-box {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 10px; padding: 28px 36px; min-width: 320px; max-width: 420px;
+      text-align: center; box-shadow: 0 8px 40px rgba(0,0,0,.6);
+    }
+    #import-modal-icon { font-size: 32px; display: block; margin-bottom: 12px; }
+    #import-modal-title { font-size: 14px; font-weight: 700; color: var(--text-bright); margin-bottom: 6px; }
+    #import-modal-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 18px; min-height: 18px; }
+    #import-modal-progress {
+      width: 100%; height: 6px; background: var(--border); border-radius: 4px;
+      overflow: hidden; margin-bottom: 18px;
+    }
+    #import-modal-bar {
+      height: 100%; width: 0%; background: var(--accent); border-radius: 4px;
+      transition: width 0.3s ease;
+      animation: import-indeterminate 1.5s ease-in-out infinite;
+    }
+    @keyframes import-indeterminate {
+      0%   { margin-left: 0%;   width: 30%; }
+      50%  { margin-left: 35%;  width: 40%; }
+      100% { margin-left: 100%; width: 0%; }
+    }
+    #import-modal-bar.done { animation: none; width: 100%; background: var(--green); }
+    #import-modal-bar.error { animation: none; width: 100%; background: var(--red); }
+
+    /* ── Custom confirm/alert dialog ── */
+    #app-dialog-overlay {
+      display: none; position: fixed; inset: 0; z-index: 9995;
+      background: rgba(0,0,0,.65); align-items: center; justify-content: center;
+    }
+    #app-dialog-overlay.active { display: flex; }
+    #app-dialog-box {
+      background: var(--card-bg); border: 1px solid var(--border);
+      border-radius: 10px; padding: 28px 32px; min-width: 320px; max-width: 460px;
+      box-shadow: 0 8px 40px rgba(0,0,0,.6); text-align: center;
+    }
+    #app-dialog-icon { font-size: 30px; margin-bottom: 10px; }
+    #app-dialog-title { font-size: 15px; font-weight: 700; color: var(--text-bright); margin-bottom: 8px; }
+    #app-dialog-msg { font-size: 12px; color: var(--text-dim); white-space: pre-wrap; line-height: 1.6; margin-bottom: 20px; }
+    #app-dialog-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    #app-dialog-btns button { min-width: 90px; }
+
+    /* ── Sidebar: pinned (full) or collapsed (icon rail) ── */
+    /* Two modes: pinned = full 210px always open | collapsed = 44px icon-only rail
+       The logo/exit area is at the BOTTOM (sidebar-footer) so collapsing the top
+       never causes a height jump in the nav items above it. */
+
+    body.sidebar-collapsed #sidebar { width: 44px; overflow: hidden; }
+    body.sidebar-collapsed #main    { margin-left: 44px; }
+
+    /* Hide text/labels in collapsed state */
+    body.sidebar-collapsed .nav-item .nav-label-text,
+    body.sidebar-collapsed .nav-label,
+    body.sidebar-collapsed .nav-badge,
+    body.sidebar-collapsed .nav-item > span,
+    body.sidebar-collapsed .sidebar-footer-company,
+    body.sidebar-collapsed .sidebar-footer-db,
+    body.sidebar-collapsed .sidebar-footer-logo { display: none !important; }
+
+    /* Collapsed nav items: center icon, same vertical padding as full */
+    body.sidebar-collapsed .nav-item {
+      padding: 7px 0;
+      justify-content: center;
+      gap: 0;
+    }
+    body.sidebar-collapsed .nav-item .icon { width: 16px; text-align: center; flex-shrink: 0; }
+    /* Remove section top-padding when label is gone (avoids empty gap) */
+    body.sidebar-collapsed .nav-section { padding: 2px 0; }
+
+    /* Footer: keep consistent height in both modes */
+    .sidebar-footer {
+      flex-shrink: 0;
+      padding: 10px 14px;
+      border-top: 1px solid var(--sidebar-border);
+    }
+    body.sidebar-collapsed .sidebar-footer {
+      padding: 8px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    body.sidebar-collapsed #sidebar-mode-btn {
+      width: 80%; border: none; padding: 3px 0;
+    }
+
+    /* Tooltip on icon hover when collapsed */
+    body.sidebar-collapsed .nav-item { position: relative; }
+    body.sidebar-collapsed .nav-item::after {
+      content: attr(data-label);
+      position: absolute; left: 48px; top: 50%; transform: translateY(-50%);
+      background: var(--sidebar-bg); border: 1px solid var(--sidebar-border);
+      color: var(--text); font-size: 11px; padding: 3px 8px; border-radius: 4px;
+      white-space: nowrap; pointer-events: none; opacity: 0;
+      transition: opacity .12s; z-index: 500;
+    }
+    body.sidebar-collapsed .nav-item:hover::after { opacity: 1; }
+
+    #sidebar-autohide-overlay { display: none; }
+    .sidebar-hover-zone { display: none; }
   </style>
   {% block head %}{% endblock %}Kurt */
 </head>
-<body {% if config.time_tracker_enabled %}data-timeclock="1"{% endif %}>
+<body {% if config.time_tracker_enabled %}data-timeclock="1"{% endif %} data-confirm-exit="{{ config.confirm_on_exit|default(1)|int }}">
+<!-- ── Global backup progress overlay ── -->
+<div id="backup-overlay">
+  <div id="backup-overlay-box">
+    <span class="bk-spinner">💾</span>
+    <div style="font-size:14px;font-weight:700;color:var(--text-bright)" id="bk-overlay-title">Creating Backup…</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:6px" id="bk-overlay-sub">Please wait, do not close this window</div>
+    <button id="bk-overlay-skip" class="btn btn-outline btn-sm" style="margin-top:16px;font-size:11px"
+            onclick="skipBackup()">Skip this backup</button>
+  </div>
+</div>
+
+<!-- ── Custom confirm / alert dialog ── -->
+<div id="app-dialog-overlay">
+  <div id="app-dialog-box">
+    <div id="app-dialog-icon">⚠️</div>
+    <div id="app-dialog-title"></div>
+    <div id="app-dialog-msg"></div>
+    <div id="app-dialog-btns"></div>
+  </div>
+</div>
+
+<!-- ── Import progress modal ── -->
+<div id="import-modal-overlay">
+  <div id="import-modal-box">
+    <span id="import-modal-icon">⬆️</span>
+    <div id="import-modal-title">Importing…</div>
+    <div id="import-modal-sub">Please wait</div>
+    <div id="import-modal-progress"><div id="import-modal-bar"></div></div>
+    <button id="import-modal-cancel" class="btn btn-outline btn-sm" onclick="cancelImport()">✕ Cancel</button>
+  </div>
+</div>
+
+<!-- ── Sidebar hover zone (unused in mini mode, kept for compat) ── -->
+<div class="sidebar-hover-zone" id="sidebar-hover-zone"></div>
 
 <nav id="sidebar">
-  <div class="sidebar-logo">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
-      <div class="company" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">{% if config.company_name %}{{ config.company_name }}{% else %}KBWeb{% endif %}</div>
-      <button id="save-exit-btn" onclick="saveAndExit()" title="Exit KBWeb"
-              style="background:none;border:1px solid var(--red,#e74c3c);color:var(--red,#e74c3c);border-radius:3px;
-                     padding:1px 6px;font-size:10px;cursor:pointer;white-space:nowrap;flex-shrink:0">⏹ Exit</button>
-    </div>
-  </div>
 
   <div class="nav-section">
     <div class="nav-label">Overview</div>
-    <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}">
-      <i class="icon">📊</i> Dashboard
+    <a href="/" class="nav-item {% if request.path == '/' %}active{% endif %}" data-label="Dashboard">
+      <i class="icon">📊</i> <span class="nav-label-text">Dashboard</span>
     </a>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">Operations</div>
-    <a href="/ledger" class="nav-item {% if request.path.startswith('/ledger') %}active{% endif %}">
-      <i class="icon">📒</i> Ledger
+    <a href="/ledger" class="nav-item {% if request.path.startswith('/ledger') %}active{% endif %}" data-label="Ledger">
+      <i class="icon">📒</i> <span class="nav-label-text">Ledger</span>
       {% if badges.get('duplicate_groups', 0) > 0 %}
       <span style="margin-left:auto;background:var(--orange,#f59e0b);color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700"
             title="{{ badges.duplicate_groups }} duplicate group(s) detected">{{ badges.duplicate_groups }}</span>
       {% endif %}
     </a>
-    <a href="/projects" class="nav-item {% if request.path.startswith('/projects') or request.path.startswith('/jobs') %}active{% endif %}">
-      <i class="icon">🏗️</i> Projects
+    <a href="/projects" class="nav-item {% if request.path.startswith('/projects') or request.path.startswith('/jobs') %}active{% endif %}" data-label="Projects">
+      <i class="icon">🏗️</i> <span class="nav-label-text">Projects</span>
     </a>
-    <a href="/timesheet" class="nav-item {% if request.path.startswith('/timesheet') %}active{% endif %}">
-      <i class="icon">⏱</i> Timesheet
+    <a href="/timesheet" class="nav-item {% if request.path.startswith('/timesheet') %}active{% endif %}" data-label="Timesheet">
+      <i class="icon">⏱</i> <span class="nav-label-text">Timesheet</span>
     </a>
-    <a href="/invoices" class="nav-item {% if request.path.startswith('/invoices') %}active{% endif %}">
-      <i class="icon">🧾</i> Invoices
+    <a href="/invoices" class="nav-item {% if request.path.startswith('/invoices') %}active{% endif %}" data-label="Invoices">
+      <i class="icon">🧾</i> <span class="nav-label-text">Invoices</span>
     </a>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">People</div>
-    <a href="/clients" class="nav-item {% if request.path.startswith('/clients') %}active{% endif %}">
-      <i class="icon">👥</i> Clients
+    <a href="/clients" class="nav-item {% if request.path.startswith('/clients') %}active{% endif %}" data-label="Clients">
+      <i class="icon">👥</i> <span class="nav-label-text">Clients</span>
     </a>
-    <a href="/employees" class="nav-item {% if request.path.startswith('/employees') %}active{% endif %}">
-      <i class="icon">👷</i> Employees
+    <a href="/employees" class="nav-item {% if request.path.startswith('/employees') %}active{% endif %}" data-label="Employees">
+      <i class="icon">👷</i> <span class="nav-label-text">Employees</span>
     </a>
-    <a href="/contractors" class="nav-item {% if request.path.startswith('/contractors') %}active{% endif %}">
-      <i class="icon">🔨</i> Contractors/Suppliers
+    <a href="/contractors" class="nav-item {% if request.path.startswith('/contractors') %}active{% endif %}" data-label="Contractors">
+      <i class="icon">🔨</i> <span class="nav-label-text">Contractors/Suppliers</span>
     </a>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">Finance</div>
-    <a href="/payroll" class="nav-item {% if request.path.startswith('/payroll') %}active{% endif %}">
-      <i class="icon">💼</i> Payroll
+    <a href="/payroll" class="nav-item {% if request.path.startswith('/payroll') %}active{% endif %}" data-label="Payroll">
+      <i class="icon">💼</i> <span class="nav-label-text">Payroll</span>
     </a>
-    <a href="/reconciliation" class="nav-item {% if request.path.startswith('/reconciliation') %}active{% endif %}">
-      <i class="icon">🏦</i> Reconciliation
+    <a href="/reconciliation" class="nav-item {% if request.path.startswith('/reconciliation') %}active{% endif %}" data-label="Reconciliation">
+      <i class="icon">🏦</i> <span class="nav-label-text">Reconciliation</span>
       {% if badges.unmatched > 0 %}
         <span class="nav-badge">{{ badges.unmatched }}</span>
       {% endif %}
     </a>
-    <a href="/reports" class="nav-item {% if request.path.startswith('/reports') %}active{% endif %}">
-      <i class="icon">📈</i> Reports
+    <a href="/reports" class="nav-item {% if request.path.startswith('/reports') %}active{% endif %}" data-label="Reports">
+      <i class="icon">📈</i> <span class="nav-label-text">Reports</span>
     </a>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">Compliance</div>
-    <a href="/tax" class="nav-item {% if request.path.startswith('/tax') %}active{% endif %}">
-      <i class="icon">🗓</i> Tax Center
+    <a href="/tax" class="nav-item {% if request.path.startswith('/tax') %}active{% endif %}" data-label="Tax Center">
+      <i class="icon">🗓</i> <span class="nav-label-text">Tax Center</span>
       {% if badges.overdue_reminders > 0 %}
         <span class="nav-badge">{{ badges.overdue_reminders }}</span>
       {% endif %}
     </a>
-    <a href="/timeclock" class="nav-item {% if request.path.startswith('/timeclock') %}active{% endif %}">
-      <i class="icon">🕐</i> Time Clock
+    <a href="/timeclock" class="nav-item {% if request.path.startswith('/timeclock') %}active{% endif %}" data-label="Time Clock">
+      <i class="icon">🕐</i> <span class="nav-label-text">Time Clock</span>
     </a>
-    <a href="/certs" class="nav-item {% if request.path.startswith('/certs') %}active{% endif %}">
-      <i class="icon">🏛️</i> Insurance
+    <a href="/certs" class="nav-item {% if request.path.startswith('/certs') %}active{% endif %}" data-label="Insurance">
+      <i class="icon">🏛️</i> <span class="nav-label-text">Insurance</span>
       {% if badges.expiring_certs > 0 %}
         <span class="nav-badge">{{ badges.expiring_certs }}</span>
       {% endif %}
@@ -660,23 +801,45 @@
 
   <div class="nav-section">
     <div class="nav-label">Tools</div>
-    <a href="/estimates" class="nav-item {% if request.path.startswith('/estimates') %}active{% endif %}">
-      <i class="icon">📋</i> Estimates
+    <a href="/estimates" class="nav-item {% if request.path.startswith('/estimates') %}active{% endif %}" data-label="Estimates">
+      <i class="icon">📋</i> <span class="nav-label-text">Estimates</span>
     </a>
-    <a href="/quote" class="nav-item {% if request.path.startswith('/quote') %}active{% endif %}">
-      <i class="icon">🧮</i> Quick Quote
+    <a href="/quote" class="nav-item {% if request.path.startswith('/quote') %}active{% endif %}" data-label="Quick Quote">
+      <i class="icon">🧮</i> <span class="nav-label-text">Quick Quote</span>
     </a>
-    <a href="/history" class="nav-item {% if request.path.startswith('/history') %}active{% endif %}">
-      <i class="icon">🕓</i> History
+    <a href="/history" class="nav-item {% if request.path.startswith('/history') %}active{% endif %}" data-label="History">
+      <i class="icon">🕓</i> <span class="nav-label-text">History</span>
     </a>
-    <a href="/settings" class="nav-item {% if request.path.startswith('/settings') %}active{% endif %}">
-      <i class="icon">⚙️</i> Settings
+    <a href="/settings" class="nav-item {% if request.path.startswith('/settings') %}active{% endif %}" data-label="Settings">
+      <i class="icon">⚙️</i> <span class="nav-label-text">Settings</span>
     </a>
   </div>
 
   <div class="sidebar-footer">
-    Phase 1 — Foundation<br>
-    <span id="db-indicator" style="color:var(--text-dim)">DB: {{ db_name }}</span>
+    <!-- Logo (hidden when collapsed) -->
+    <div class="sidebar-footer-logo" style="text-align:center;margin-bottom:6px">
+      {% if config.company_logo_path %}
+      <img src="/files/logo" alt="Logo"
+           style="max-width:100%;max-height:48px;object-fit:contain;border-radius:4px">
+      {% endif %}
+    </div>
+    <!-- Company name + Exit (hidden when collapsed) -->
+    <div class="sidebar-footer-company" style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px">
+      <div style="font-size:11px;font-weight:700;color:var(--text-bright);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{% if config.company_name %}{{ config.company_name }}{% else %}KBWeb{% endif %}</div>
+      <button id="save-exit-btn" onclick="saveAndExit()" title="Exit KBWeb"
+              style="background:none;border:1px solid var(--red,#e74c3c);color:var(--red,#e74c3c);border-radius:3px;
+                     padding:1px 5px;font-size:10px;cursor:pointer;white-space:nowrap;flex-shrink:0">⏹</button>
+    </div>
+    <!-- DB indicator (hidden when collapsed) -->
+    <div class="sidebar-footer-db" style="font-size:9px;color:var(--text-dim);margin-bottom:6px">
+      DB: <span id="db-indicator">{{ db_name }}</span>
+    </div>
+    <!-- Toggle button — always visible, centered when collapsed -->
+    <div style="display:flex;justify-content:center">
+      <button id="sidebar-mode-btn" onclick="toggleSidebarMode()"
+              style="background:none;border:1px solid var(--sidebar-border);color:var(--text-dim);border-radius:4px;
+                     padding:2px 10px;font-size:12px;cursor:pointer;width:100%">◀</button>
+    </div>
   </div>
 </nav>
 
@@ -827,7 +990,8 @@ Examples: Receipt entry, Invoices, Estimating, Emails, Planning`,
   // Override saveAndExit to end session first
   const origSaveAndExit = window.saveAndExit;
   window.saveAndExit = function() {
-    if (!confirm('Save and exit KBWeb?')) return;
+    const needConfirm = document.body.dataset.confirmExit !== '0';
+    if (needConfirm && !confirm('Save and exit KBWeb?')) return;
     window.__timeclockEnd(() => {
       fetch('/api/shutdown', {method:'POST'})
         .then(() => {
@@ -845,8 +1009,38 @@ Examples: Receipt entry, Invoices, Estimating, Emails, Planning`,
   });
 })();
 
+// ── Global backup overlay helpers ────────────────────────────────────────
+let _bkSkipped = false;
+function showBackupOverlay(title, sub) {
+  _bkSkipped = false;
+  document.getElementById('bk-overlay-title').textContent = title || 'Creating Backup…';
+  document.getElementById('bk-overlay-sub').textContent   = sub   || 'Please wait, do not close this window';
+  document.getElementById('backup-overlay').classList.add('active');
+}
+function hideBackupOverlay() {
+  document.getElementById('backup-overlay').classList.remove('active');
+}
+function skipBackup() {
+  _bkSkipped = true;
+  hideBackupOverlay();
+  showToast('Backup skipped', 'info', 2000);
+}
+// Wrap existing backup-triggering functions to show/hide overlay
+async function runBackupWithOverlay(title, fetchFn) {
+  showBackupOverlay(title);
+  try {
+    const result = await fetchFn();
+    hideBackupOverlay();
+    return result;
+  } catch(e) {
+    hideBackupOverlay();
+    throw e;
+  }
+}
+
 function saveAndExit() {
-  if (!confirm('Save and exit KBWeb?')) return;
+  const needConfirm = document.body.dataset.confirmExit !== '0';
+  if (needConfirm && !confirm('Save and exit KBWeb?')) return;
   fetch('/api/shutdown', {method:'POST'})
     .then(() => {
       document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;flex-direction:column;gap:16px"><div style="font-size:24px">✅</div><div style="font-size:16px">KBWeb has stopped. You can close this tab.</div></div>';
@@ -875,6 +1069,152 @@ function updateClock() {
 }
 updateClock();
 setInterval(updateClock, 30000);
+
+// ── Custom confirm/alert (replaces native browser dialogs) ──────────────
+let _dialogResolve = null;
+
+function _showDialog({ icon='⚠️', title='', msg='', buttons=[] }) {
+  document.getElementById('app-dialog-icon').textContent = icon;
+  document.getElementById('app-dialog-title').textContent = title;
+  document.getElementById('app-dialog-msg').textContent = msg;
+  const btns = document.getElementById('app-dialog-btns');
+  btns.innerHTML = '';
+  buttons.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'btn ' + (b.cls || 'btn-outline');
+    btn.textContent = b.label;
+    btn.onclick = () => {
+      document.getElementById('app-dialog-overlay').classList.remove('active');
+      if (_dialogResolve) { _dialogResolve(b.value); _dialogResolve = null; }
+    };
+    btns.appendChild(btn);
+  });
+  document.getElementById('app-dialog-overlay').classList.add('active');
+}
+
+// Override window.confirm with styled async version
+// Usage: await appConfirm('Are you sure?') → true/false
+// IMPORTANT: This is async — callers must use: if (!await appConfirm(...)) return;
+// For backwards compatibility, we do NOT override window.confirm (it's synchronous).
+// All pages should use appConfirm/appConfirmDanger instead.
+function appConfirm(msg, title='Confirm', icon='⚠️') {
+  return new Promise(resolve => {
+    _dialogResolve = resolve;
+    _showDialog({ icon, title, msg, buttons: [
+      { label: 'Cancel',  cls: 'btn-outline', value: false },
+      { label: 'OK',      cls: 'btn-primary',  value: true  }
+    ]});
+  });
+}
+function appConfirmDanger(msg, title='Confirm', confirmLabel='Delete', icon='🗑') {
+  return new Promise(resolve => {
+    _dialogResolve = resolve;
+    _showDialog({ icon, title, msg, buttons: [
+      { label: 'Cancel',    cls: 'btn-outline', value: false },
+      { label: confirmLabel, cls: 'btn-danger', value: true  }
+    ]});
+  });
+}
+function appAlert(msg, title='Notice', icon='ℹ️') {
+  return new Promise(resolve => {
+    _dialogResolve = resolve;
+    _showDialog({ icon, title, msg, buttons: [
+      { label: 'OK', cls: 'btn-primary', value: true }
+    ]});
+  });
+}
+// Close on backdrop click
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('app-dialog-overlay').addEventListener('click', function(e) {
+    if (e.target === this) {
+      this.classList.remove('active');
+      if (_dialogResolve) { _dialogResolve(false); _dialogResolve = null; }
+    }
+  });
+});
+
+// ── Sidebar toggle: pinned (full) ↔ collapsed (icon rail) ────────────────
+const SIDEBAR_MODE_KEY = 'kbweb_sidebar_mode';
+
+function _applySidebarMode(mode) {
+  if (mode === 'collapsed') {
+    document.body.classList.add('sidebar-collapsed');
+  } else {
+    document.body.classList.remove('sidebar-collapsed');
+  }
+  _updateSidebarToggleBtn(mode);
+}
+
+function toggleSidebarMode() {
+  const current = localStorage.getItem(SIDEBAR_MODE_KEY) || 'pinned';
+  const next    = current === 'pinned' ? 'collapsed' : 'pinned';
+  localStorage.setItem(SIDEBAR_MODE_KEY, next);
+  _applySidebarMode(next);
+  showToast(next === 'collapsed' ? 'Sidebar: icon rail' : 'Sidebar: pinned', 'success', 1600);
+}
+
+function _updateSidebarToggleBtn(mode) {
+  const btn = document.getElementById('sidebar-mode-btn');
+  if (!btn) return;
+  if (mode === 'collapsed') {
+    btn.textContent = '▶';
+    btn.title = 'Expand sidebar';
+  } else {
+    btn.textContent = '◀';
+    btn.title = 'Collapse to icon rail';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem(SIDEBAR_MODE_KEY) || 'pinned';
+  _applySidebarMode(saved);
+});
+
+// ── Import modal (with AbortController cancel) ──────────────────────────
+let _importAbortCtrl = null;
+
+function showImportModal(title, sub) {
+  _importAbortCtrl = new AbortController();
+  document.getElementById('import-modal-icon').textContent = '⬆️';
+  document.getElementById('import-modal-title').textContent = title || 'Importing…';
+  document.getElementById('import-modal-sub').textContent   = sub   || 'Please wait';
+  document.getElementById('import-modal-bar').className = '';
+  document.getElementById('import-modal-cancel').style.display = '';
+  document.getElementById('import-modal-overlay').classList.add('active');
+  return _importAbortCtrl.signal;
+}
+
+function hideImportModal(state, msg) {
+  // state: 'success' | 'error' | null (just close)
+  const bar = document.getElementById('import-modal-bar');
+  if (state === 'success') {
+    bar.className = 'done';
+    document.getElementById('import-modal-icon').textContent = '✅';
+    document.getElementById('import-modal-title').textContent = 'Import complete';
+    document.getElementById('import-modal-sub').textContent = msg || '';
+    document.getElementById('import-modal-cancel').style.display = 'none';
+    setTimeout(() => document.getElementById('import-modal-overlay').classList.remove('active'), 1200);
+  } else if (state === 'error') {
+    bar.className = 'error';
+    document.getElementById('import-modal-icon').textContent = '❌';
+    document.getElementById('import-modal-title').textContent = 'Import failed';
+    document.getElementById('import-modal-sub').textContent = msg || 'An error occurred';
+    document.getElementById('import-modal-cancel').textContent = '✕ Close';
+    setTimeout(() => document.getElementById('import-modal-overlay').classList.remove('active'), 2500);
+  } else {
+    document.getElementById('import-modal-overlay').classList.remove('active');
+  }
+  _importAbortCtrl = null;
+}
+
+function cancelImport() {
+  if (_importAbortCtrl) {
+    _importAbortCtrl.abort();
+    _importAbortCtrl = null;
+  }
+  document.getElementById('import-modal-overlay').classList.remove('active');
+  showToast('Import cancelled', 'error');
+}
 
 // Toast
 function showToast(msg, type='success') {

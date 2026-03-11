@@ -189,69 +189,199 @@ def _parse_amount_signed(s) -> float:
 # Auto-matching engine
 # ─────────────────────────────────────────────
 
+def _parse_split_total(memo: str):
+    """Extract the declared split TOTAL from a memo string, or None if not a split entry.
+    Handles: 'Split 99.52', 'Split 99.52, extra', '6360, Split 6375', 'direct, Split 4598.75'
+    The number immediately after 'split' (case-insensitive) is the bank transaction total.
+    """
+    if not memo:
+        return None
+    m = re.search(r'[Ss]plit\s*(-?[\d]+\.?[\d]*)', memo)
+    if m:
+        return abs(float(m.group(1)))
+    return None
+
+
 def _run_auto_match(acct_id: int, conn) -> int:
     """
-    Try to auto-match unmatched bank transactions against uncleared ledger entries.
-    Returns count of new matches made.
+    Deterministic greedy auto-match. Single pass — no improvement from re-running.
+
+    SPLIT ENTRIES FIRST:
+      Ledger entries with 'Split XX.XX' in memo share a group total.
+      All parts with the same memo total + same date + same vendor = one bank transaction.
+      The declared total (not sum of parts) is matched against bt.amount.
+
+    NON-SPLIT ENTRIES:
+      Match by amount (abs, ±$0.02), then score by date proximity + description similarity.
+      Build all candidate pairs, sort by score DESC, greedily assign (highest score first).
+      This is stable — running again will find nothing new.
+
+    DATE WINDOWS:
+      Splits: ±7 days (same-vendor same-day grouping, may post a day or two late)
+      Singles: ±30 days (ledger entry may be recorded days before/after bank posts)
+
+    AMOUNT LOGIC:
+      DB ledger.amount: negative = expense, positive = income
+      DB bank_transactions.amount: always positive; transaction_type = Debit/Credit
+      Match: abs(bt.amount) vs abs(le.amount) within $0.02
     """
-    # Fetch unmatched bank transactions for this account
-    bank_rows = conn.execute("""
+    # ── Load unmatched bank transactions ──────────────────────────────────────
+    bank_rows = [dict(r) for r in conn.execute("""
         SELECT * FROM bank_transactions
         WHERE bank_account_id=? AND match_status='Unmatched' AND is_deleted=0
-    """, [acct_id]).fetchall()
+        ORDER BY transaction_date DESC
+    """, [acct_id]).fetchall()]
 
-    # Fetch uncleared ledger entries for this account (or any account if not assigned)
-    ledger_rows = conn.execute("""
-        SELECT * FROM ledger
+    # ── Load eligible ledger entries ─────────────────────────────────────────
+    # Include entries already assigned to this account (bank_account_id=acct_id)
+    # AND unassigned entries (bank_account_id IS NULL).
+    # Exclude already-Cleared entries.
+    ledger_rows = [dict(r) for r in conn.execute("""
+        SELECT id, entry_date, amount, description, vendor, memo,
+               bank_account_id, status, type_of_payment
+        FROM ledger
         WHERE (bank_account_id=? OR bank_account_id IS NULL)
           AND status != 'Cleared' AND is_deleted=0
-    """, [acct_id]).fetchall()
+    """, [acct_id]).fetchall()]
 
-    matched = 0
-    used_ledger_ids = set()
+    if not bank_rows or not ledger_rows:
+        return 0
+
+    # Pre-compute split totals for every ledger row
+    for le in ledger_rows:
+        le['_split_total'] = _parse_split_total(le.get('memo') or '')
+        le['_is_split']    = le['_split_total'] is not None
+        le['_abs_amount']  = abs(float(le.get('amount') or 0))
+
+    used_le_ids = set()   # ledger ids consumed
+    used_bt_ids = set()   # bank transaction ids matched
+    matched     = 0
+
+    def commit_match(bt, primary_le, all_le_ids):
+        """Write match to DB for one bank transaction."""
+        conn.execute("""
+            UPDATE bank_transactions
+            SET matched_ledger_id=?, match_status='Auto-Matched', updated_at=datetime('now')
+            WHERE id=?
+        """, [primary_le['id'], bt['id']])
+        for le_id in all_le_ids:
+            conn.execute("""
+                UPDATE ledger
+                SET status='Cleared', bank_account_id=?, updated_at=datetime('now')
+                WHERE id=?
+            """, [acct_id, le_id])
+            used_le_ids.add(le_id)
+        used_bt_ids.add(bt['id'])
+
+    def parse_date(s):
+        if not s: return None
+        for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'):
+            try: return datetime.strptime(s.strip(), fmt).date()
+            except: pass
+        return None
+
+    # ── PASS 1: SPLIT GROUPS ──────────────────────────────────────────────────
+    # Group ledger splits by (declared_total, date, vendor) — all same-day same-vendor.
+    # Key insight: ALL splits from one receipt have same date + vendor.
+    from collections import defaultdict
+    split_groups = defaultdict(list)
+    for le in ledger_rows:
+        if not le['_is_split']:
+            continue
+        d = parse_date(le.get('entry_date') or '')
+        vendor = (le.get('vendor') or '').strip().lower()
+        key = (le['_split_total'], str(d), vendor)
+        split_groups[key].append(le)
+
+    # Build candidate (bt, split_group) pairs sorted by confidence
+    split_candidates = []
+    for bt in bank_rows:
+        if bt['id'] in used_bt_ids:
+            continue
+        bt_amt  = float(bt['amount'])
+        bt_date = parse_date(bt.get('transaction_date') or '')
+        if bt_date is None:
+            continue
+
+        for (grp_total, grp_date_str, grp_vendor), grp_les in split_groups.items():
+            if any(le['id'] in used_le_ids for le in grp_les):
+                continue
+            # Amount must match declared total
+            if abs(grp_total - bt_amt) > 0.02:
+                continue
+            # Date proximity ±7 days
+            try:
+                grp_date = datetime.strptime(grp_date_str, '%Y-%m-%d').date()
+            except:
+                continue
+            days = abs((bt_date - grp_date).days)
+            if days > 7:
+                continue
+            # Score: closer date = better; vendor match in description = bonus
+            desc_lower = (bt.get('description') or '').lower()
+            vendor_score = 1.0 if grp_vendor and grp_vendor in desc_lower else 0.0
+            score = 10.0 + vendor_score - (days * 0.5)
+            split_candidates.append((score, bt, grp_les))
+
+    # Sort by score DESC — highest confidence first
+    split_candidates.sort(key=lambda x: -x[0])
+    for score, bt, grp_les in split_candidates:
+        if bt['id'] in used_bt_ids:
+            continue
+        if any(le['id'] in used_le_ids for le in grp_les):
+            continue
+        commit_match(bt, grp_les[0], [le['id'] for le in grp_les])
+        matched += 1
+
+    # ── PASS 2: SINGLE NON-SPLIT ENTRIES ─────────────────────────────────────
+    # Build ALL candidate (bt, le) pairs, score them, sort DESC, greedily assign.
+    single_candidates = []
+    non_split_les = [le for le in ledger_rows if not le['_is_split']]
 
     for bt in bank_rows:
-        bt = dict(bt)
-        best_ledger_id  = None
-        best_score      = 0.0
+        if bt['id'] in used_bt_ids:
+            continue
+        bt_amt  = float(bt['amount'])
+        bt_date = parse_date(bt.get('transaction_date') or '')
+        if bt_date is None:
+            continue
+        bt_desc = (bt.get('description') or '').lower()
 
-        for le in ledger_rows:
-            le = dict(le)
-            if le['id'] in used_ledger_ids:
+        for le in non_split_les:
+            if le['id'] in used_le_ids:
+                continue
+            # Amount match: abs values within $0.02
+            if abs(le['_abs_amount'] - bt_amt) > 0.02:
+                continue
+            le_date = parse_date(le.get('entry_date') or '')
+            if le_date is None:
+                continue
+            days = abs((bt_date - le_date).days)
+            if days > 30:
                 continue
 
-            # Amount must match within $0.01
-            if not _amount_match(bt['amount'], le['amount']):
-                continue
+            # Score components:
+            #   date: 30 points max, minus 1 per day away
+            date_score = max(0, 30 - days)
+            #   description/vendor similarity
+            le_desc   = (le.get('description') or '').lower()
+            le_vendor = (le.get('vendor') or '').lower()
+            desc_score = _desc_similarity(bt_desc, le_desc)
+            vend_score = _desc_similarity(bt_desc, le_vendor) if le_vendor else 0.0
+            text_score = max(desc_score, vend_score) * 10.0
+            #   exact amount match bonus
+            amt_bonus = 5.0 if abs(le['_abs_amount'] - bt_amt) < 0.005 else 0.0
 
-            # Date proximity (within 5 days)
-            if not _date_proximity(bt['transaction_date'], le['entry_date'], days=5):
-                continue
+            total_score = date_score + text_score + amt_bonus
+            single_candidates.append((total_score, bt['id'], le['id'], bt, le))
 
-            # Description similarity tiebreaker
-            score = _desc_similarity(bt['description'], le.get('description', ''))
-            # Strong date match boosts score
-            date_diff = abs((datetime.strptime(bt['transaction_date'], '%Y-%m-%d').date()
-                            - datetime.strptime(le['entry_date'], '%Y-%m-%d').date()).days)
-            score += (5 - date_diff) * 0.1  # closer date = higher score
-
-            if score > best_score:
-                best_score     = score
-                best_ledger_id = le['id']
-
-        if best_ledger_id and best_score >= 0.0:
-            conn.execute("""
-                UPDATE bank_transactions
-                SET matched_ledger_id=?, match_status='Auto-Matched', updated_at=datetime('now')
-                WHERE id=?
-            """, [best_ledger_id, bt['id']])
-            conn.execute("""
-                UPDATE ledger SET status='Cleared', reconciliation_id=?,
-                    bank_account_id=?, updated_at=datetime('now')
-                WHERE id=?
-            """, [None, acct_id, best_ledger_id])
-            used_ledger_ids.add(best_ledger_id)
-            matched += 1
+    # Sort by score DESC — deterministic assignment, no improvement from re-running
+    single_candidates.sort(key=lambda x: -x[0])
+    for total_score, bt_id, le_id, bt, le in single_candidates:
+        if bt['id'] in used_bt_ids or le['id'] in used_le_ids:
+            continue
+        commit_match(bt, le, [le['id']])
+        matched += 1
 
     return matched
 
@@ -800,40 +930,100 @@ def api_session_complete(sess_id):
 
 @phase8.route('/api/recon/ledger-search')
 def api_ledger_search():
-    """Search uncleared ledger entries for manual match."""
+    """Search uncleared ledger entries for manual match.
+
+    Returns {results: [...], splits: [...]} where splits are detected split-memo groups.
+
+    Amount matching:
+      - Bank amount is always positive (e.g. $50 debit or $50 credit)
+      - Ledger amount: positive = income, negative = expense/refund
+      - We compare ABS(ledger.amount) to the bank transaction amount
+      - A refund row (expense=-50, amount=+50) will match a $50 credit transaction ✓
+    """
     q       = request.args.get('q', '').strip()
     acct_id = request.args.get('acct_id', '')
     amount  = request.args.get('amount', '')
-    limit   = int(request.args.get('limit', 20))
+    limit   = int(request.args.get('limit', 80))
 
     conn = get_connection()
     try:
         where  = ["l.status != 'Cleared'", "l.is_deleted=0"]
         params = []
+
         if acct_id:
             where.append("(l.bank_account_id=? OR l.bank_account_id IS NULL)")
             params.append(int(acct_id))
+
+        # Text search: all meaningful fields
         if q:
-            where.append("(l.description LIKE ? OR l.vendor LIKE ? OR l.job_code LIKE ?)")
-            params += [f'%{q}%', f'%{q}%', f'%{q}%']
-        if amount:
-            try:
-                amt = float(amount)
-                where.append("ABS(l.amount - ?) < 0.02")
-                params.append(amt)
-            except ValueError:
-                pass
+            where.append("""(
+                l.description    LIKE ? OR
+                l.vendor         LIKE ? OR
+                l.job_code       LIKE ? OR
+                l.memo           LIKE ? OR
+                l.category       LIKE ? OR
+                l.notes          LIKE ? OR
+                l.invoice_number LIKE ? OR
+                l.nickname       LIKE ?
+            )""")
+            pq = f'%{q}%'
+            params += [pq, pq, pq, pq, pq, pq, pq, pq]
+
+        # Build ORDER BY: sort by proximity to bank amount first, then date
+        try:
+            amt_float = float(amount) if amount else None
+        except ValueError:
+            amt_float = None
+
+        if amt_float is not None:
+            order_expr = f"ABS(ABS(l.amount) - {amt_float}) ASC, l.entry_date DESC"
+        else:
+            order_expr = "l.entry_date DESC"
 
         rows = conn.execute(f"""
-            SELECT l.id, l.entry_date, l.description, l.amount, l.category,
-                   l.job_code, l.vendor, l.status
+            SELECT l.id, l.entry_date, l.description, l.amount,
+                   l.income, l.expense,
+                   l.category, l.job_code, l.vendor, l.status,
+                   l.memo, l.invoice_number, l.nickname,
+                   0 AS is_split_part
             FROM ledger l
             WHERE {' AND '.join(where)}
-            ORDER BY l.entry_date DESC
+            ORDER BY {order_expr}
             LIMIT ?
         """, params + [limit]).fetchall()
-        return jsonify([dict(r) for r in rows])
+
+        results = []
+        for r in rows:
+            rd = dict(r)
+            # For the match UI, expose the effective absolute amount.
+            # Use ABS(amount) since negatives are expenses; both sides compare as positive.
+            rd['abs_amount'] = abs(float(rd['amount'] or 0))
+            results.append(rd)
+
+        # Detect split groups: entries where memo contains "Split XX.XX"
+        from collections import defaultdict
+        split_groups = defaultdict(list)
+        for r in results:
+            memo = r.get('memo') or ''
+            split_total = _parse_split_total(memo)
+            if split_total is not None:
+                r['is_split_part'] = 1
+                key = (split_total, (r.get('entry_date') or '')[:10], (r.get('vendor') or '').strip().lower())
+                split_groups[key].append(r)
+
+        splits_out = []
+        for (grp_total, grp_date, grp_vendor), grp_rows in split_groups.items():
+            if len(grp_rows) > 1:
+                splits_out.append({
+                    'total':        grp_total,
+                    'ids':          [r['id'] for r in grp_rows],
+                    'amounts':      [abs(float(r['amount'] or 0)) for r in grp_rows],
+                    'descriptions': [r.get('description') or r.get('vendor') or '' for r in grp_rows],
+                })
+
+        return jsonify({'results': results, 'splits': splits_out})
     finally:
+        conn.close()
         conn.close()
 
 

@@ -7,7 +7,7 @@
 <!-- KPI tiles -->
 <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
   <div class="kpi-tile green">
-    <div class="kpi-label">Collected (YTD)</div>
+    <div class="kpi-label">Collected{% if status_filter or client_filter or year_filter or job_filter %} (filtered){% else %} (all){% endif %}</div>
     <div class="kpi-value">${{ '{:,.0f}'.format(summary.paid_total or 0) }}</div>
   </div>
   <div class="kpi-tile accent">
@@ -37,11 +37,11 @@
     <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
       <div class="form-group" style="flex:1;min-width:160px;margin:0">
         <label>Search</label>
-        <input type="search" name="q" value="{{ q }}" placeholder="Invoice #, client, job…" class="search">
+        <input type="search" name="q" value="{{ q }}" placeholder="Invoice #, client, job…" class="search" oninput="invDebounce()">
       </div>
       <div class="form-group" style="margin:0">
         <label>Status</label>
-        <select name="status" style="min-width:110px">
+        <select name="status" style="min-width:110px" onchange="invAutoFilter()">
           <option value="">All Status</option>
           {% for s in ['Pending','Partial','Overdue','Paid'] %}
           <option value="{{ s }}" {% if status_filter==s %}selected{% endif %}>{{ s }}</option>
@@ -50,16 +50,16 @@
       </div>
       <div class="form-group" style="margin:0">
         <label>Client</label>
-        <select name="client" style="min-width:140px">
+        <select name="client" id="inv-client-sel" style="min-width:140px" onchange="invAutoFilter()">
           <option value="">All Clients</option>
           {% for c in clients %}
-          <option value="{{ c.id }}" {% if client_filter==c.id|string %}selected{% endif %}>{{ c.full_name }}</option>
+          <option value="{{ c.full_name }}" {% if client_filter==c.full_name %}selected{% endif %}>{{ c.full_name }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="form-group" style="margin:0">
         <label>Job</label>
-        <select name="job" style="min-width:110px">
+        <select name="job" style="min-width:110px" onchange="invAutoFilter()">
           <option value="">All Jobs</option>
           {% for j in jobs %}
           <option value="{{ j }}" {% if job_filter==j %}selected{% endif %}>{{ j }}</option>
@@ -68,16 +68,15 @@
       </div>
       <div class="form-group" style="margin:0">
         <label>Year</label>
-        <select name="year" style="min-width:80px">
+        <select name="year" style="min-width:80px" onchange="invAutoFilter()">
           <option value="">All Years</option>
           {% for yr in years %}
           <option value="{{ yr }}" {% if year_filter==yr %}selected{% endif %}>{{ yr }}</option>
           {% endfor %}
         </select>
       </div>
-      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
       {% if q or status_filter or client_filter or job_filter or year_filter %}
-        <a href="/invoices" class="btn btn-outline btn-sm">Clear</a>
+        <a href="/invoices" class="btn btn-outline btn-sm">✕ Clear</a>
       {% endif %}
       <div style="margin-left:auto;display:flex;gap:8px">
         <a href="/invoices/export?status={{ status_filter }}&client={{ client_filter }}&year={{ year_filter }}" class="btn btn-outline btn-sm">⬇ Export CSV</a>
@@ -97,6 +96,7 @@
             <th style="width:80px">Invoice #</th>
             <th style="width:100px">Date</th>
             <th style="width:100px">Due Date</th>
+            <th style="width:100px">Paid Date</th>
             <th>Client</th>
             <th style="width:100px">Job</th>
             <th style="width:110px;text-align:right">Amount</th>
@@ -119,8 +119,11 @@
             <td class="mono {% if row.status == 'Overdue' %}text-red{% else %}text-dim{% endif %}" style="font-size:11px">
               {{ row.due_date or '—' }}
             </td>
+            <td class="mono text-dim" style="font-size:11px">
+              {{ row.paid_date or '—' }}
+            </td>
             <td>
-              <div style="font-size:12px">{{ row.client_name or '—' }}</div>
+              <div style="font-size:12px">{{ row.client_name or ('Client #' + row.client_id|string if row.client_id else '—') }}</div>
               {% if row.customer_id %}
               <div class="text-dim" style="font-size:10px">{{ row.customer_id }}</div>
               {% endif %}
@@ -159,13 +162,14 @@
               <div class="flex gap-4">
                 <a href="/invoices/{{ row.id }}" class="btn btn-outline btn-xs" title="View">👁</a>
                 <a href="/invoices/{{ row.id }}/edit" class="btn btn-outline btn-xs" title="Edit">✏️</a>
-                <a href="/invoices/{{ row.id }}/pdf" class="btn btn-outline btn-xs" title="PDF" target="_blank">🖨</a>
+                <a href="/invoices/{{ row.id }}/pdf?mode=detail" class="btn btn-outline btn-xs" title="Detailed PDF" target="_blank">🖨</a>
+                <a href="/invoices/{{ row.id }}/pdf?mode=summary" class="btn btn-outline btn-xs" title="Customer PDF (summary)" target="_blank" style="font-size:10px">📄</a>
               </div>
             </td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="10" class="empty-state" style="padding:40px;text-align:center">
+            <td colspan="12" class="empty-state" style="padding:40px;text-align:center">
               <div style="font-size:36px;margin-bottom:10px">🧾</div>
               <p class="text-dim">No invoices{% if q or status_filter or client_filter %} matching filters{% endif %}.</p>
               <a href="/invoices/new" class="btn btn-primary mt-8">+ New Invoice</a>
@@ -176,14 +180,35 @@
       </table>
     </div>
 
-    {% if pages > 1 %}
-    <div class="flex gap-8" style="padding:10px;justify-content:center;border-top:1px solid var(--border)">
+    {% if pages >= 1 %}
+    <div class="flex gap-8" style="padding:8px 14px;justify-content:center;align-items:center;border-top:1px solid var(--border);flex-wrap:wrap">
+      {%- set ns = namespace(parts=[]) -%}
+      {%- for k, v in request.args.items() -%}
+        {%- if k != 'page' -%}{%- set ns.parts = ns.parts + [k+'='+v] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set qs_np = ns.parts|join('&') -%}
       {% if page > 1 %}
-        <a href="?page={{ page-1 }}&status={{ status_filter }}&client={{ client_filter }}&job={{ job_filter }}&year={{ year_filter }}&q={{ q }}" class="btn btn-outline btn-sm">← Prev</a>
+        <a href="?page=1&{{ qs_np }}" class="btn btn-outline btn-sm" title="First page">«</a>
+        <a href="?page={{ page-1 }}&{{ qs_np }}" class="btn btn-outline btn-sm">← Prev</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">«</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">← Prev</span>
       {% endif %}
-      <span class="text-dim" style="align-self:center">Page {{ page }} / {{ pages }}</span>
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)">
+        Page
+        <input type="number" id="inv-pg-jump" min="1" max="{{ pages }}" value="{{ page }}"
+               style="width:48px;text-align:center;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:11px"
+               onkeydown="if(event.key==='Enter'){var p=Math.max(1,Math.min({{ pages }},parseInt(this.value)||1));window.location='?page='+p+'&{{ qs_np }}';}">
+        / {{ pages }}
+        <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:10px"
+                onclick="var p=Math.max(1,Math.min({{ pages }},parseInt(document.getElementById('inv-pg-jump').value)||1));window.location='?page='+p+'&{{ qs_np }}';">Go</button>
+      </span>
       {% if page < pages %}
-        <a href="?page={{ page+1 }}&status={{ status_filter }}&client={{ client_filter }}&job={{ job_filter }}&year={{ year_filter }}&q={{ q }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ page+1 }}&{{ qs_np }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ pages }}&{{ qs_np }}" class="btn btn-outline btn-sm" title="Last page">»</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">Next →</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">»</span>
       {% endif %}
     </div>
     {% endif %}
@@ -193,5 +218,16 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', () => initSortableTable('invoices-table'));
+
+let _invFilterTimer = null;
+function invDebounce() {
+  clearTimeout(_invFilterTimer);
+  _invFilterTimer = setTimeout(() => invAutoFilter(), 400);
+}
+function invAutoFilter() {
+  clearTimeout(_invFilterTimer);
+  const form = document.querySelector('.card form[method="GET"]');
+  if (form) form.submit();
+}
 </script>
 {% endblock %}

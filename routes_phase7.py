@@ -1,3 +1,4 @@
+# routes_phase7.py  v1.0.2 – 2026-03-11 – fixed year=all crash, dashboard KPI columns, chart yearly grouping
 """
 Phase 7 Routes — Tax Reminders & Deadlines
 Full tax deadline management:
@@ -122,14 +123,19 @@ def tax():
     try:
         today     = date.today()
         today_str = today.strftime('%Y-%m-%d')
-        year      = int(request.args.get('year', today.year))
+        year_raw  = request.args.get('year', str(today.year))
+        year      = 'all' if year_raw == 'all' else int(year_raw)
         view      = request.args.get('view', 'list')   # 'list' or 'calendar'
         status_f  = request.args.get('status', '')
 
         where  = ["is_deleted=0"]
         params = []
-        # Year filter: due_date in selected year (but show overdue from prior years too)
-        if not status_f:
+        if year == 'all':
+            # No year restriction — show everything, with optional status filter
+            if status_f:
+                where.append("status=?"); params.append(status_f)
+        elif not status_f:
+            # Year filter: due_date in selected year (but show overdue from prior years too)
             where.append("(substr(due_date,1,4)=? OR (status='Pending' AND due_date < ?))")
             params += [str(year), f"{year}-01-01"]
         else:
@@ -159,9 +165,10 @@ def tax():
         overdue  = [r for r in pending if r['days_until'] < 0]
         upcoming7= [r for r in pending if 0 <= r['days_until'] <= 7]
 
-        # Calendar data: for the current month view
+        # Calendar data: for the current month view (only relevant when not 'all')
+        _cal_year_default = today.year if year == 'all' else year
         cal_month = int(request.args.get('month', today.month))
-        cal_year  = int(request.args.get('cal_year', year))
+        cal_year  = int(request.args.get('cal_year', _cal_year_default))
         cal_rows  = conn.execute("""
             SELECT id, due_date, task_description, status
             FROM reminders
@@ -180,7 +187,7 @@ def tax():
             FROM reminders WHERE is_deleted=0 ORDER BY yr
         """).fetchall()
         year_list = [r['yr'] for r in years]
-        if str(year) not in year_list:
+        if year != 'all' and str(year) not in year_list:
             year_list.append(str(year))
         year_list = sorted(set(year_list))
 

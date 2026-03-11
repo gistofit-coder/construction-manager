@@ -1,3 +1,4 @@
+{# tax.html  v1.0.1 – 2026-03-11 #}
 {% extends "base.html" %}
 {% block title %}Tax Reminders — {{ config.company_name or 'Construction Manager' }}{% endblock %}
 {% block topbar_title %}📅 Tax Reminders & Deadlines{% endblock %}
@@ -36,13 +37,16 @@
     <div class="flex gap-8" style="flex-wrap:wrap;align-items:center">
       <!-- Year picker -->
       <form method="GET" class="flex gap-6" style="align-items:center">
-        <input type="hidden" name="view" value="{{ view }}">
+        <input type="hidden" name="view" value="list">
         <label class="text-dim" style="font-size:12px">Year:</label>
         <select name="year" style="min-width:80px" onchange="this.form.submit()">
+          <option value="all" {% if year == 'all' %}selected{% endif %}>All Years</option>
           {% for yr in year_list %}
           <option value="{{ yr }}" {% if yr == year|string %}selected{% endif %}>{{ yr }}</option>
           {% endfor %}
+          {% if year != 'all' %}
           <option value="{{ year + 1 }}" {% if (year + 1)|string not in year_list %}{% endif %}>{{ year + 1 }}</option>
+          {% endif %}
         </select>
         <!-- Status filter -->
         <select name="status" style="min-width:110px" onchange="this.form.submit()">
@@ -52,14 +56,6 @@
           <option value="RemindLater" {% if status_f=='RemindLater' %}selected{% endif %}>Snoozed</option>
         </select>
       </form>
-
-      <!-- View toggle -->
-      <div class="btn-group">
-        <a href="?year={{ year }}&view=list&status={{ status_f }}"
-           class="btn btn-sm {% if view=='list' %}btn-primary{% else %}btn-outline{% endif %}">☰ List</a>
-        <a href="?year={{ year }}&view=calendar&status={{ status_f }}&month={{ cal_month }}&cal_year={{ cal_year }}"
-           class="btn btn-sm {% if view=='calendar' %}btn-primary{% else %}btn-outline{% endif %}">📆 Calendar</a>
-      </div>
 
       <!-- Actions -->
       <div style="margin-left:auto;display:flex;gap:8px">
@@ -293,11 +289,11 @@
       <div class="form-grid">
         <div class="form-group">
           <label>From Year</label>
-          <input type="number" id="advance-from" value="{{ year }}" min="2020" max="2035">
+          <input type="number" id="advance-from" value="{{ year if year != 'all' else today[:4] }}" min="2020" max="2035">
         </div>
         <div class="form-group">
           <label>To Year</label>
-          <input type="number" id="advance-to" value="{{ year + 1 }}" min="2021" max="2036">
+          <input type="number" id="advance-to" value="{{ (year + 1) if year != 'all' else (today[:4]|int + 1) }}" min="2021" max="2036">
         </div>
       </div>
     </div>
@@ -438,7 +434,8 @@ async function reopenReminder(id) {
 }
 
 async function deleteReminder(id) {
-  if (!confirm('Delete this reminder? You can undo.')) return;
+  const ok = await appConfirmDanger('Delete this reminder? This cannot be undone.', 'Delete Reminder?', 'Delete', '🗑');
+  if (!ok) return;
   const res  = await fetch(`/api/reminders/${id}/delete`, {method:'POST', headers:{'Content-Type':'application/json'}});
   const data = await res.json();
   if (data.success) {

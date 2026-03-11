@@ -66,29 +66,23 @@ def timesheet():
     conn = get_connection()
     try:
         # ── Params ────────────────────────────────────────────
-        view      = request.args.get('view', 'list')   # list | week
+        view      = 'list'   # week view removed — list only
         q         = request.args.get('q', '').strip()
         emp_filter= request.args.get('emp', '').strip()
         job_filter= request.args.get('job', '').strip()
         date_from = request.args.get('from', '').strip()
         date_to   = request.args.get('to', '').strip()
-        week_str  = request.args.get('week', '')       # YYYY-MM-DD of week's Monday
         page      = max(1, int(request.args.get('page', 1)))
-        per_page  = int(request.args.get('per_page', 50))
-
-        # Week view defaults to current week
-        if view == 'week':
-            if week_str:
-                try:
-                    week_mon = datetime.strptime(week_str, '%Y-%m-%d').date()
-                    week_mon = week_mon - timedelta(days=week_mon.weekday())
-                except ValueError:
-                    week_mon = date.today() - timedelta(days=date.today().weekday())
-            else:
-                week_mon = date.today() - timedelta(days=date.today().weekday())
-            week_sun = week_mon + timedelta(days=6)
-            prev_week = (week_mon - timedelta(days=7)).strftime('%Y-%m-%d')
-            next_week = (week_mon + timedelta(days=7)).strftime('%Y-%m-%d')
+        per_page  = max(1, int(request.args.get('per_page', 50)))
+        # Sort
+        SORT_ALLOWED = {'entry_date','emp_name','job_code','work_type','billable',
+                        'hours','bill_rate','cost_rate','bill_amount','cost_amount','expenses'}
+        sort_col = request.args.get('sort', 'entry_date')
+        if sort_col not in SORT_ALLOWED: sort_col = 'entry_date'
+        sort_dir = request.args.get('dir', 'desc')
+        if sort_dir not in ('asc','desc'): sort_dir = 'desc'
+        # week vars kept as empty so template context doesn't break
+        week_str = ''; week_mon = None; week_sun = None; prev_week = ''; next_week = ''
 
         # ── Build WHERE ────────────────────────────────────────
         where = ["t.is_deleted=0"]
@@ -128,19 +122,24 @@ def timesheet():
         ).fetchone()[0]
 
         # ── Rows (list view) ──────────────────────────────────
-        rows = []
-        if view == 'list':
-            rows = conn.execute(f"""
-                SELECT t.*,
-                       e.first_name || ' ' || e.last_name AS emp_name,
-                       j.description AS job_desc
-                FROM timesheet t
-                LEFT JOIN employees e ON t.emp_id = e.emp_id
-                LEFT JOIN jobs j ON t.job_code = j.job_code
-                WHERE {where_sql}
-                ORDER BY t.entry_date DESC, t.emp_id, t.id DESC
-                LIMIT ? OFFSET ?
-            """, params + [per_page, (page-1)*per_page]).fetchall()
+        # Map sort_col to actual SQL expression
+        _sort_map = {
+            'emp_name':   "(e.first_name || ' ' || e.last_name)",
+            'bill_amount':'t.bill_amount', 'cost_amount':'t.cost_amount',
+        }
+        _sort_expr = _sort_map.get(sort_col, f't.{sort_col}')
+
+        rows = conn.execute(f"""
+            SELECT t.*,
+                   e.first_name || ' ' || e.last_name AS emp_name,
+                   j.description AS job_desc
+            FROM timesheet t
+            LEFT JOIN employees e ON t.emp_id = e.emp_id
+            LEFT JOIN jobs j ON t.job_code = j.job_code
+            WHERE {where_sql}
+            ORDER BY {_sort_expr} {sort_dir}, t.id DESC
+            LIMIT ? OFFSET ?
+        """, params + [per_page, (page-1)*per_page]).fetchall()
 
         # ── Weekly grid data ──────────────────────────────────
         week_data = {}    # {emp_id: {day_str: [entries]}}
@@ -208,6 +207,20 @@ def timesheet():
 
         today = date.today().strftime('%Y-%m-%d')
 
+        pages = (total_count + per_page - 1) // per_page if per_page else 1
+
+        # ts_url: build pagination URL preserving all filters + sort
+        def ts_url(p):
+            from flask import url_for as _uf
+            import urllib.parse as _ul
+            base = '/timesheet?page=' + str(p)
+            for k, v in [('sort', sort_col), ('dir', sort_dir), ('per_page', per_page),
+                         ('emp', emp_filter), ('job', job_filter),
+                         ('from', date_from), ('to', date_to), ('q', q)]:
+                if v:
+                    base += f'&{k}={_ul.quote(str(v))}'
+            return base
+
         return render_template('timesheet.html',
             config=config, badges=badges,
             view=view, today=today,
@@ -215,25 +228,22 @@ def timesheet():
             totals=dict(totals),
             total_count=total_count,
             page=page, per_page=per_page,
-            pages=(total_count + per_page - 1) // per_page if per_page else 1,
+            pages=pages,
+            sort_col=sort_col, sort_dir=sort_dir,
             # filters
             q=q, emp_filter=emp_filter, job_filter=job_filter,
             date_from=date_from, date_to=date_to,
-            # week
-            week_days=week_days,
-            week_data=week_data,
-            week_employees=week_employees,
-            week_str=week_str or (week_mon.strftime('%Y-%m-%d') if view=='week' else ''),
-            prev_week=prev_week if view=='week' else '',
-            next_week=next_week if view=='week' else '',
-            week_mon=(week_mon.strftime('%b') + ' ' + str(week_mon.day)) if view=='week' else '',
-            week_sun=(week_sun.strftime('%b') + ' ' + str(week_sun.day) + week_sun.strftime(', %Y')) if view=='week' else '',
             # dropdowns
             employees=[dict(e) for e in employees],
             all_employees=[dict(e) for e in all_employees],
             jobs=[dict(j) for j in jobs],
-            all_jobs=[r['job_code'] for r in all_jobs],
-            all_work_types=[r['category_name'] for r in work_types],
+            all_jobs=[row['job_code'] for row in all_jobs],
+            all_work_types=[row['category_name'] for row in work_types],
+            # url helper (callable in template)
+            ts_url=ts_url,
+            # week vars (empty - week view removed)
+            week_days=[], week_data={}, week_employees=[],
+            week_str='', prev_week='', next_week='', week_mon='', week_sun='',
         )
     finally:
         conn.close()
@@ -428,7 +438,8 @@ def timesheet_bulk():
 
 TS_EDITABLE = {
     'entry_date', 'job_code', 'invoice_number', 'hours',
-    'bill_rate', 'cost_rate', 'expenses', 'description', 'notes'
+    'bill_rate', 'cost_rate', 'expenses', 'description', 'notes',
+    'billable', 'work_type', 'person_label'
 }
 
 @phase4.route('/api/timesheet/<int:row_id>/patch', methods=['POST'])
@@ -490,7 +501,11 @@ def api_ts_patch(row_id):
 @phase4.route('/timesheet/<int:row_id>/delete', methods=['POST'])
 def timesheet_delete(row_id):
     with db() as conn:
+        old_row = conn.execute("SELECT * FROM timesheet WHERE id=?", [row_id]).fetchone()
         soft_delete(conn, 'timesheet', row_id)
+        log_action(conn, 'timesheet', row_id, 'DELETE',
+                   old_data=dict(old_row) if old_row else {},
+                   user_label=f'Deleted timesheet #{row_id}')
     if request.is_json:
         return jsonify({'success': True})
     flash('Entry deleted (Undo to restore).', 'success')
@@ -661,9 +676,9 @@ def timesheet_export():
         ).fetchall()
 
         def generate():
-            cols = ['id','entry_date','emp_id','person_label','job_code',
-                    'hours','bill_rate','cost_rate','bill_amount','cost_amount',
-                    'expenses','invoice_number','description','notes']
+            cols = ['id','entry_date','person_label','job_code','invoice_number',
+                    'work_type','description','bill_amount','bill_rate','expenses',
+                    'cost_amount','cost_rate','billable','hours','notes']
             yield ','.join(cols) + '\n'
             for r in rows:
                 d = dict(r)

@@ -124,18 +124,12 @@ def get_nav_badges():
             "SELECT COUNT(*) FROM certificates WHERE end_date < ? AND is_deleted=0",
             [today]
         ).fetchone()[0]
-        # Duplicate count (exact only, to avoid noise)
-        duplicate_groups = conn.execute("""
-            SELECT COUNT(*) FROM (
-                SELECT entry_date, vendor, amount
-                FROM ledger
-                WHERE is_deleted=0
-                  AND (duplicate_flag IS NULL OR duplicate_flag != 'dismissed')
-                  AND vendor != '' AND amount != 0
-                GROUP BY entry_date, vendor, amount
-                HAVING COUNT(*) > 1
-            )
-        """).fetchone()[0]
+        # Badge counts EXACT duplicates only (near-matches are informational)
+        try:
+            from routes_phase3 import _find_duplicate_groups as _fdg
+            duplicate_groups = sum(1 for g in _fdg(conn) if g['match_type'] == 'exact')
+        except Exception:
+            duplicate_groups = 0
 
         # Unverified receipts
         unverified_receipts = conn.execute(
@@ -167,13 +161,16 @@ def dashboard():
         year = datetime.now().year
 
         # KPIs
-        # Income = cash actually received (ledger entries marked 'Income Received'
-        # OR invoices marked Paid/Partial — whichever the user has more data in)
-        ledger_income = conn.execute("""
-            SELECT COALESCE(SUM(amount), 0) FROM ledger
-            WHERE entry_date >= ? AND is_deleted=0
-              AND category IN ('Income Received','ACCOUNT CREDIT')
-              AND amount > 0
+        # Income = any ledger row where income was recorded (income col set and positive)
+        # This catches all categories, not just 'Income Received'
+        # Use canonical signed-amount expression
+        _AMT = "COALESCE(income, CASE WHEN expense IS NOT NULL THEN -expense ELSE amount END, 0)"
+        ledger_income = conn.execute(f"""
+            SELECT COALESCE(SUM({_AMT}), 0) FROM ledger l
+            LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+            WHERE entry_date >= ? AND l.is_deleted=0
+              AND {_AMT} > 0
+              AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
         """, [f"{year}-01-01"]).fetchone()[0]
 
         invoice_revenue = conn.execute("""
@@ -184,16 +181,13 @@ def dashboard():
         # Use ledger income if populated, otherwise fall back to invoice revenue
         ytd_revenue = ledger_income if ledger_income > 0 else invoice_revenue
 
-        # Expenses = all positive ledger entries EXCEPT income/transfer categories
-        EXCLUDE_CATS = (
-            "'Income Received','ACCOUNT CREDIT','Credit Card Payment',"
-            "'Contribution','Distribution','Distributions','Credit','Previous','Memo','KB','WRITE OFF'"
-        )
+        # Expenses = ledger expense entries (signed amount negative), excluding transfers
         ytd_expenses = conn.execute(f"""
-            SELECT COALESCE(SUM(amount), 0) FROM ledger
-            WHERE entry_date >= ? AND is_deleted=0
-              AND amount > 0
-              AND category NOT IN ({EXCLUDE_CATS})
+            SELECT COALESCE(SUM(ABS({_AMT})), 0) FROM ledger l
+            LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+            WHERE entry_date >= ? AND l.is_deleted=0
+              AND {_AMT} < 0
+              AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
         """, [f"{year}-01-01"]).fetchone()[0]
 
         outstanding_sum = conn.execute("""
@@ -220,12 +214,13 @@ def dashboard():
         for r in reminders:
             r['display'] = get_reminder_status(r['due_date'], r['status'])
 
-        # Expiring certs
+        # Expiring certs — exactly matches insurance page logic: BETWEEN today AND today+60
         expiring = conn.execute("""
             SELECT * FROM certificates
-            WHERE end_date <= date(?, '+60 days') AND is_deleted=0
-            ORDER BY end_date ASC LIMIT 5
-        """, [today]).fetchall()
+            WHERE end_date BETWEEN ? AND date(?, '+60 days')
+              AND is_deleted=0
+            ORDER BY end_date ASC LIMIT 8
+        """, [today, today]).fetchall()
         expiring = [dict(c) for c in expiring]
         for c in expiring:
             c['cert_status'] = get_cert_status(c['end_date'])
@@ -315,6 +310,64 @@ def settings():
         conn.close()
 
 
+
+
+@app.route('/files/logo')
+def serve_logo():
+    """Serve the company logo uploaded in settings."""
+    config = get_config()
+    path = config.get('company_logo_path', '')
+    if path and os.path.isfile(path):
+        return send_file(path)
+    return ('No logo configured', 404)
+
+
+@app.route('/settings/logo', methods=['POST'])
+def settings_logo_upload():
+    """Upload/replace company logo."""
+    f = request.files.get('logo_file')
+    if not f or not f.filename:
+        flash('No file selected.', 'error')
+        return redirect(url_for('settings'))
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'):
+        flash('Unsupported file type. Use PNG, JPG, GIF, WebP or SVG.', 'error')
+        return redirect(url_for('settings'))
+    # Store logo in static/uploads/ next to the app
+    upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads')
+    os.makedirs(upload_dir, exist_ok=True)
+    logo_path = os.path.join(upload_dir, f'company_logo{ext}')
+    f.save(logo_path)
+    with db() as conn:
+        conn.execute("UPDATE company_config SET company_logo_path=?, updated_at=datetime('now') WHERE id=1",
+                     [logo_path])
+    flash('Logo uploaded successfully.', 'success')
+    return redirect(url_for('settings'))
+
+
+
+@app.route('/api/settings/patch', methods=['POST'])
+def api_settings_patch():
+    """AJAX endpoint: update one or more company_config fields instantly.
+    Used by timeclock toggle, auto-save, and any in-page settings widget."""
+    ALLOWED = {
+        'time_tracker_enabled','continuous_scroll','auto_backup_mode',
+        'backup_keep_count','confirm_on_exit',
+        'default_overhead_pct','default_insurance_pct',
+        'default_owner_wages_pct','default_profit_pct','default_markup_pct',
+    }
+    data = request.get_json(silent=True) or {}
+    fields = {k: v for k, v in data.items() if k in ALLOWED}
+    if not fields:
+        return jsonify({'success': False, 'error': 'No valid fields'}), 400
+    with db() as conn:
+        set_clause = ', '.join(f"{k}=?" for k in fields)
+        conn.execute(
+            f"UPDATE company_config SET {set_clause}, updated_at=datetime('now') WHERE id=1",
+            list(fields.values())
+        )
+    return jsonify({'success': True, 'updated': list(fields.keys())})
+
 @app.route('/settings/company', methods=['POST'])
 def settings_company_save():
     data = request.form.to_dict()
@@ -323,7 +376,7 @@ def settings_company_save():
                   'website','license_number','ein','receipts_folder_path','invoices_folder_path',
                   'certs_folder_path','backup_folder_path','active_jobs_folder_path','payroll_year',
                   'time_tracker_enabled',
-                  'backup_keep_count','continuous_scroll',
+                  'backup_keep_count','continuous_scroll','auto_backup_mode','confirm_on_exit',
                   'fica_rate_employee','medicare_rate_employee','fica_rate_employer',
                   'medicare_rate_employer','futa_rate','futa_wage_base','suta_rate_il',
                   'suta_wage_base_il','prior_year_withholding_carryforward',
@@ -366,21 +419,155 @@ def settings_bank_account_save():
         if acct_id:
             conn.execute("""
                 UPDATE bank_accounts SET account_name=?,account_type=?,institution_name=?,
-                last_four=?,current_balance=?,notes=?,updated_at=datetime('now')
+                last_four=?,current_balance=?,notes=?,statements_folder_path=?,
+                updated_at=datetime('now')
                 WHERE id=?
             """, [data.get('account_name',''), data.get('account_type','Checking'),
                   data.get('institution_name',''), data.get('last_four',''),
-                  float(data.get('current_balance',0)), data.get('notes',''), acct_id])
+                  float(data.get('current_balance',0)), data.get('notes',''),
+                  data.get('statements_folder_path','').strip(), acct_id])
         else:
             conn.execute("""
-                INSERT INTO bank_accounts (account_name,account_type,institution_name,last_four,current_balance,notes)
-                VALUES (?,?,?,?,?,?)
+                INSERT INTO bank_accounts (account_name,account_type,institution_name,
+                    last_four,current_balance,notes,statements_folder_path)
+                VALUES (?,?,?,?,?,?,?)
             """, [data.get('account_name',''), data.get('account_type','Checking'),
                   data.get('institution_name',''), data.get('last_four',''),
-                  float(data.get('current_balance',0)), data.get('notes','')])
+                  float(data.get('current_balance',0)), data.get('notes',''),
+                  data.get('statements_folder_path','').strip()])
     flash('Bank account saved.', 'success')
     return redirect(url_for('settings'))
 
+
+
+
+@app.route('/api/recon/account/<int:acct_id>/match-stats', methods=['GET'])
+def api_recon_account_match_stats(acct_id):
+    """Return current match statistics for a bank account (for the confirm dialog)."""
+    with db() as conn:
+        acct = conn.execute(
+            "SELECT id, account_name FROM bank_accounts WHERE id=? AND is_deleted=0", [acct_id]
+        ).fetchone()
+        if not acct:
+            return jsonify({'error': 'Account not found'}), 404
+
+        matched = conn.execute("""
+            SELECT COUNT(*) FROM bank_transactions
+            WHERE bank_account_id=? AND is_deleted=0
+              AND match_status IN ('Auto-Matched', 'Manual-Matched')
+        """, [acct_id]).fetchone()[0]
+
+        ledger_freed = conn.execute(
+            "SELECT COUNT(*) FROM ledger WHERE bank_account_id=? AND is_deleted=0", [acct_id]
+        ).fetchone()[0]
+
+    return jsonify({'matched': matched, 'ledger_freed': ledger_freed})
+
+
+@app.route('/api/recon/account/<int:acct_id>/clear-matches', methods=['POST'])
+def api_recon_account_clear_matches(acct_id):
+    """
+    Reset ALL match results for a single bank account (Auto-Matched AND Manual-Matched).
+
+    What this does:
+      1. Resets bank_transactions.match_status → 'Unmatched' for all matched txns
+      2. Clears bank_transactions.matched_ledger_id → NULL
+      3. Clears bank_transactions.notes
+      4. Resets ledger entries linked to this account:
+           - status → 'Pending'
+           - bank_account_id → NULL
+           - reconciliation_id → NULL
+      (Both auto-matched AND manually matched / reconciled entries are cleared.)
+
+    What this does NOT do:
+      - Does not delete any transactions or ledger entries
+      - Does not touch 'Excluded' bank transactions
+      - Does not affect other bank accounts
+
+    Use this to fully reset and re-run auto-match.
+    """
+    with db() as conn:
+        acct = conn.execute(
+            "SELECT id, account_name FROM bank_accounts WHERE id=? AND is_deleted=0", [acct_id]
+        ).fetchone()
+        if not acct:
+            return jsonify({'error': 'Account not found'}), 404
+
+        # Count before reset (for response / log)
+        matched_before = conn.execute("""
+            SELECT COUNT(*) FROM bank_transactions
+            WHERE bank_account_id=? AND is_deleted=0
+              AND match_status IN ('Auto-Matched', 'Manual-Matched')
+        """, [acct_id]).fetchone()[0]
+
+        ledger_before = conn.execute(
+            "SELECT COUNT(*) FROM ledger WHERE bank_account_id=? AND is_deleted=0", [acct_id]
+        ).fetchone()[0]
+
+        # 1. Collect all ledger IDs linked via matched bank transactions (for full status reset)
+        linked_ledger_ids = [
+            r[0] for r in conn.execute("""
+                SELECT DISTINCT matched_ledger_id FROM bank_transactions
+                WHERE bank_account_id=? AND is_deleted=0
+                  AND match_status IN ('Auto-Matched', 'Manual-Matched')
+                  AND matched_ledger_id IS NOT NULL
+            """, [acct_id]).fetchall()
+        ]
+
+        # 2. Reset bank transactions — leave 'Excluded' alone
+        conn.execute("""
+            UPDATE bank_transactions
+            SET match_status      = 'Unmatched',
+                matched_ledger_id = NULL,
+                notes             = '',
+                updated_at        = datetime('now')
+            WHERE bank_account_id = ?
+              AND is_deleted = 0
+              AND match_status IN ('Auto-Matched', 'Manual-Matched')
+        """, [acct_id])
+
+        # 3. Reset all ledger entries assigned to this account:
+        #    - Clear status back to Pending
+        #    - Unlink bank_account_id
+        #    - Clear reconciliation_id (handles manually reconciled entries)
+        conn.execute("""
+            UPDATE ledger
+            SET status            = 'Pending',
+                bank_account_id   = NULL,
+                reconciliation_id = NULL,
+                updated_at        = datetime('now')
+            WHERE bank_account_id = ?
+              AND is_deleted = 0
+        """, [acct_id])
+
+        # 4. Also reset any ledger entries that were linked via matched_ledger_id
+        #    but may have a different bank_account_id (edge case: orphaned links)
+        if linked_ledger_ids:
+            placeholders = ','.join('?' * len(linked_ledger_ids))
+            conn.execute(f"""
+                UPDATE ledger
+                SET status            = 'Pending',
+                    bank_account_id   = NULL,
+                    reconciliation_id = NULL,
+                    updated_at        = datetime('now')
+                WHERE id IN ({placeholders}) AND is_deleted = 0
+            """, linked_ledger_ids)
+
+        # Log the action
+        from automations import log_action
+        log_action(conn, 'bank_transactions', 0, 'UPDATE', new_data={
+            'action': 'clear_matches',
+            'account_id': acct_id,
+            'account_name': acct['account_name'],
+            'transactions_reset': matched_before,
+            'ledger_entries_freed': ledger_before,
+        })
+
+    return jsonify({
+        'success': True,
+        'reset': matched_before,
+        'ledger_freed': ledger_before,
+    })
 
 
 @app.route('/settings/bank-account/<int:acct_id>/delete', methods=['POST'])
@@ -515,6 +702,15 @@ def settings_backup():
 
 
 
+@app.route('/api/backup/manual', methods=['POST'])
+def api_backup_manual():
+    """AJAX endpoint so the UI can show the backup overlay while backing up."""
+    ok, msg = _do_backup('manual')
+    if ok:
+        return jsonify({'success': True, 'filename': os.path.basename(msg)})
+    return jsonify({'success': False, 'error': msg}), 500
+
+
 @app.route('/api/backup/list')
 def api_backup_list():
     """List all backups with size and date."""
@@ -539,6 +735,47 @@ def api_backup_list():
         })
     return jsonify({'backups': result})
 
+
+
+
+@app.route('/api/backup/delete', methods=['POST'])
+def api_backup_delete():
+    """Delete a specific backup file from disk.
+    Accepts 'name' (basename only) or 'path' (full path — basename is extracted).
+    The file is always resolved relative to the configured backup_folder_path."""
+    data = request.get_json() or {}
+    # Accept either 'name' (preferred, safe) or 'path' (legacy — extract basename)
+    name = data.get('name', '').strip()
+    if not name:
+        raw_path = data.get('path', '').strip()
+        name = os.path.basename(raw_path)
+    if not name:
+        return jsonify({'error': 'No filename provided'}), 400
+
+    # Block path traversal in the filename itself
+    if os.sep in name or '/' in name or '..' in name:
+        return jsonify({'error': 'Invalid filename'}), 400
+
+    # Only allow deleting files that match our backup naming convention
+    if not name.startswith('kbweb_backup_') or not name.endswith('.zip'):
+        return jsonify({'error': 'Not a recognised backup file'}), 400
+
+    try:
+        config = get_config()
+        backup_folder = config.get('backup_folder_path', '').strip()
+        if not backup_folder or not os.path.isdir(backup_folder):
+            return jsonify({'error': 'Backup folder not configured or missing'}), 400
+
+        target = os.path.join(backup_folder, name)
+        if not os.path.isfile(target):
+            return jsonify({'error': 'File not found'}), 404
+
+        os.remove(target)
+        return jsonify({'success': True, 'message': f'Deleted: {name}'})
+    except PermissionError:
+        return jsonify({'error': 'Permission denied — cannot delete file'}), 403
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/backup/restore', methods=['POST'])
 def api_backup_restore():
@@ -1116,10 +1353,11 @@ def api_undo_history():
             ORDER BY id DESC LIMIT ?
         """, params + [n]).fetchall()
 
+        # Group entries by session_id (batch ops appear as one item)
+        seen_sessions = {}
         entries = []
         for r in rows:
             d = dict(r)
-            # Parse old/new for display summary
             try:
                 old = json.loads(d.get('old_data') or '{}')
                 new = json.loads(d.get('new_data') or '{}')
@@ -1145,7 +1383,16 @@ def api_undo_history():
                         label = f"Updated {d['table_name']} #{d['record_id']}"
 
             status = {0: 'active', 1: 'undone', 2: 'redone'}.get(d['reversed'], 'active')
-            entries.append({
+            sid = d.get('session_id', '')
+
+            if sid and sid in seen_sessions:
+                # Fold into existing batch entry
+                batch = seen_sessions[sid]
+                batch['batch_count'] += 1
+                batch['ids'].append(d['id'])
+                continue
+
+            entry = {
                 'id':          d['id'],
                 'time':        d['action_time'],
                 'table':       d['table_name'],
@@ -1156,7 +1403,13 @@ def api_undo_history():
                 'field_name':  d.get('field_name',''),
                 'can_undo':    d['reversed'] == 0,
                 'can_redo':    d['reversed'] == 1,
-            })
+                'session_id':  sid,
+                'batch_count': 1,
+                'ids':         [d['id']],
+            }
+            if sid:
+                seen_sessions[sid] = entry
+            entries.append(entry)
 
         # Stats
         total       = conn.execute("SELECT COUNT(*) FROM undo_log").fetchone()[0]
@@ -1474,16 +1727,22 @@ def _scan_cert_pdfs():
             return _re.sub(r'[^a-z0-9]', '', (s or '').lower())
 
         def parse_cert_dates(stem):
-            """Parse 'CompanyName MM-DD-YY_MM-DD-YY' → (company, start, end)."""
+            """Parse 'CompanyName MM-DD-YY_MM-DD-YY' → (company, start, end).
+            Handles 1-2 digit months/days, 2 OR 4 digit years."""
             m = _re.search(r'(.+?)\s+(\d{1,2}-\d{1,2}-\d{2,4})_(\d{1,2}-\d{1,2}-\d{2,4})$', stem)
             if m:
                 def pd(s):
                     pts = s.split('-')
-                    if len(pts) == 3:
-                        mm, dd, yy = pts
-                        yr = int(yy) + (2000 if int(yy) < 50 else 1900)
+                    if len(pts) != 3:
+                        return ''
+                    mm, dd, yy = pts
+                    try:
+                        yr = int(yy)
+                        if yr < 100:   # 2-digit → 4-digit year
+                            yr += 2000 if yr < 50 else 1900
                         return f'{yr:04d}-{int(mm):02d}-{int(dd):02d}'
-                    return ''
+                    except (ValueError, TypeError):
+                        return ''
                 return m.group(1).strip(), pd(m.group(2)), pd(m.group(3))
             return stem, '', ''
 
@@ -1555,11 +1814,23 @@ def _scan_cert_pdfs():
                     continue
 
             existing = cert_by_con.get(con_id, [])
+
+            # Skip if this exact PDF is already linked
             if any(c['cert_pdf_filename'] == rel_path for c in existing):
                 matched += 1
                 continue
 
-            unlinked = [c for c in existing if not c['cert_pdf_filename']]
+            # Skip if a cert with the same end_date already exists for this contractor
+            # (prevents duplicate COIs from repeated scans; same company can have
+            # multiple COIs but each must have a distinct end_date)
+            if end_date and any(c['end_date'] == end_date for c in existing):
+                matched += 1
+                continue
+
+            # Try to fill an unlinked cert record first (user pre-created cert with no PDF)
+            # Only fill if the dates are compatible (both blank, or matching)
+            unlinked = [c for c in existing if not c['cert_pdf_filename']
+                        and (not c.get('end_date') or not end_date or c.get('end_date') == end_date)]
             if unlinked:
                 cert_id = unlinked[0]['id']
                 sets, vals = ["cert_pdf_filename=?", "cert_verified=1"], [rel_path]
@@ -1569,6 +1840,9 @@ def _scan_cert_pdfs():
                     f"UPDATE certificates SET {', '.join(sets)}, updated_at=datetime('now') WHERE id=?",
                     vals + [cert_id]
                 )
+                # Update in-memory cache so later PDFs for same contractor don't re-fill
+                unlinked[0]['cert_pdf_filename'] = rel_path
+                unlinked[0]['end_date'] = end_date
                 matched += 1
             else:
                 con_row = conn.execute("SELECT company_name FROM contractors WHERE id=?", [con_id]).fetchone()
@@ -1579,6 +1853,12 @@ def _scan_cert_pdfs():
                          start_date, end_date, cert_verified, created_at, updated_at)
                     VALUES (?, ?, 'COI', ?, ?, ?, 1, datetime('now'), datetime('now'))
                 """, [con_id, con_name, rel_path, start_date, end_date])
+                # Add to in-memory cache so this PDF won't be re-processed this run
+                cert_by_con.setdefault(con_id, []).append({
+                    'cert_pdf_filename': rel_path,
+                    'end_date': end_date,
+                    'id': None  # rowid not tracked here, that's fine
+                })
                 created += 1
                 matched += 1
 
@@ -1697,7 +1977,24 @@ def history():
 
 
 def _history_summary(table, action, old, new):
-    """Generate a one-line human readable description of a change."""
+    """Generate a detailed human-readable description of a change.
+    For UPDATEs, shows each changed field with its before→after value inline.
+    """
+    # Human-friendly field name overrides
+    FIELD_LABELS = {
+        'vendor': 'Vendor', 'date': 'Date', 'amount': 'Amount',
+        'income': 'Income', 'expense': 'Expense', 'description': 'Description',
+        'memo': 'Memo', 'job_id': 'Job', 'category': 'Category',
+        'project': 'Project', 'payment_method': 'Payment',
+        'invoice_number': 'Invoice #', 'invoice_date': 'Date',
+        'total_amount': 'Total', 'balance_due': 'Balance',
+        'cert_type': 'Cert Type', 'end_date': 'Expiry', 'start_date': 'Start',
+        'company_name': 'Company', 'trade_type': 'Trade',
+        'full_name': 'Name', 'email': 'Email', 'phone': 'Phone',
+        'job_code': 'Job Code', 'first_name': 'First', 'last_name': 'Last',
+        'is_deleted': 'Deleted', 'status': 'Status',
+    }
+    # Fields that identify the record for the label prefix
     label_map = {
         'ledger':       ('date', 'vendor', 'amount'),
         'invoices':     ('invoice_date', 'invoice_number', 'amount'),
@@ -1708,25 +2005,47 @@ def _history_summary(table, action, old, new):
         'jobs':         ('job_code', 'description', None),
         'employees':    ('first_name', 'last_name', None),
     }
+    # Fields never worth showing in diffs
+    SKIP = {'updated_at', 'created_at', 'id', 'session_id', 'user_label',
+            'duplicate_flag', 'receipt_verified', 'coi_verified'}
+
     fields = label_map.get(table, (None, None, None))
     src    = new if action == 'INSERT' else old
-
-    parts = [f for f in fields if f and src.get(f)]
-    if parts:
-        label = " — ".join(str(src[f]) for f in parts if src.get(f))
-    else:
-        label = f"Record #{src.get('id', '?')}"
+    parts  = [f for f in fields if f and src.get(f)]
+    label  = " — ".join(str(src[f]) for f in parts if src.get(f)) if parts else f"Record #{src.get('id', '?')}"
 
     if action == 'INSERT':
-        return f"Created: {label}"
+        # Show key non-null fields
+        highlights = []
+        for k, v in new.items():
+            if k in SKIP or v is None or v == '' or v == 0: continue
+            hl = FIELD_LABELS.get(k, k)
+            highlights.append(f"{hl}: {v}")
+            if len(highlights) >= 4: break
+        detail = f" ({', '.join(highlights)})" if highlights else ''
+        return f"Created {label}{detail}"
+
     elif action == 'DELETE':
-        return f"Deleted: {label}"
-    else:
-        # Show what fields changed
-        changed = [k for k in new if k not in ('updated_at',) and old.get(k) != new.get(k)]
+        return f"Deleted {label}"
+
+    else:  # UPDATE
+        changed = []
+        for k in sorted(set(list(old.keys()) + list(new.keys()))):
+            if k in SKIP: continue
+            ov, nv = old.get(k), new.get(k)
+            if ov == nv: continue
+            # Skip null→null or empty→empty
+            if (not ov and ov != 0) and (not nv and nv != 0): continue
+            fname = FIELD_LABELS.get(k, k)
+            ov_s = str(ov) if ov is not None else '—'
+            nv_s = str(nv) if nv is not None else '—'
+            # Truncate long values
+            if len(ov_s) > 40: ov_s = ov_s[:37] + '…'
+            if len(nv_s) > 40: nv_s = nv_s[:37] + '…'
+            changed.append(f"{fname}: {ov_s} → {nv_s}")
         if changed:
-            return f"Updated {label}: {', '.join(changed)}"
-        return f"Updated: {label}"
+            return f"{label} · " + "; ".join(changed[:5]) + ("…" if len(changed) > 5 else "")
+        return f"Updated {label} (no data changes recorded)"
 
 
 @app.route('/api/history/<int:log_id>/revert', methods=['POST'])
@@ -1747,7 +2066,9 @@ def api_history_revert(log_id):
 
         # Whitelist of revertable tables
         REVERTABLE = {'ledger', 'invoices', 'certificates', 'job_estimates', 'clients',
-                      'contractors', 'jobs', 'employees', 'payroll_records'}
+                      'contractors', 'jobs', 'employees', 'payroll_records',
+                      'bank_transactions', 'timesheet', 'job_milestones',
+                      'program_sessions'}
         if table not in REVERTABLE:
             return jsonify({'error': f'Revert not supported for table: {table}'}), 400
 
@@ -1909,6 +2230,42 @@ def api_timeclock_end():
         conn.close()
 
 
+
+
+@app.route('/api/timeclock/session/<int:session_id>/edit', methods=['POST'])
+def api_timeclock_session_edit(session_id):
+    """Edit a program_sessions record."""
+    data = request.get_json(silent=True) or {}
+    fields, vals = [], []
+    for col in ('start_time','end_time','description','tags','active_minutes'):
+        if col in data:
+            fields.append(f'{col}=?')
+            vals.append(data[col] if data[col] != '' else None if col == 'end_time' else data[col])
+    if not fields:
+        return jsonify({'success': False, 'error': 'Nothing to update'}), 400
+    with db() as conn:
+        old_row = conn.execute("SELECT * FROM program_sessions WHERE id=?", [session_id]).fetchone()
+        conn.execute(
+            f"UPDATE program_sessions SET {', '.join(fields)} WHERE id=?",
+            vals + [session_id]
+        )
+        log_action(conn, 'program_sessions', session_id, 'UPDATE',
+                   old_data=dict(old_row) if old_row else {},
+                   user_label=f'Edited timeclock session #{session_id}')
+    return jsonify({'success': True})
+
+
+@app.route('/api/timeclock/session/<int:session_id>/delete', methods=['POST'])
+def api_timeclock_session_delete(session_id):
+    """Hard-delete a program_sessions record."""
+    with db() as conn:
+        old_row = conn.execute("SELECT * FROM program_sessions WHERE id=?", [session_id]).fetchone()
+        conn.execute("DELETE FROM program_sessions WHERE id=?", [session_id])
+        log_action(conn, 'program_sessions', session_id, 'DELETE',
+                   old_data=dict(old_row) if old_row else {},
+                   user_label=f'Deleted timeclock session #{session_id}')
+    return jsonify({'success': True})
+
 @app.route('/timeclock')
 def timeclock_log():
     """View time clock log."""
@@ -2006,11 +2363,17 @@ def api_clear_table():
 def _dm_ledger_import(content: str, mode: str = 'append'):
     """
     Import ledger CSV from the Data Management tab.
-    Uses the same pipeline as /ledger/import (COL_ALIASES, receipt handling, etc.)
-    but without the duplicate-detection preview step.
+    For 'append': routes through the same preview+duplicate-check flow as /ledger/import.
+    For 'replace': executes immediately (destructive, no preview needed — backup taken first).
     """
-    from routes_phase3 import _parse_import_csv, _auto_receipt
+    import uuid as _uuid, tempfile as _tf
+    from routes_phase3 import (
+        _parse_import_csv, _auto_receipt,
+        _check_import_row_duplicate, _get_recurring_patterns,
+        _get_bank_accounts,
+    )
     from automations import verify_receipt
+    from database import get_connection as _gc
 
     rows, errors = _parse_import_csv(
         content_raw=content,
@@ -2023,72 +2386,248 @@ def _dm_ledger_import(content: str, mode: str = 'append'):
     if not rows and errors:
         return jsonify({'error': 'CSV parse errors: ' + '; '.join(errors[:3])}), 400
 
-    config = get_config()
-    receipts_folder = config.get('receipts_folder_path', '')
-    imported = skipped = 0
-
+    # ── REPLACE mode: no preview, execute immediately ──────────────────────
     if mode == 'replace':
         _do_backup('pre-import')
-
-    with db() as conn:
-        if mode == 'replace':
+        config = get_config()
+        receipts_folder = config.get('receipts_folder_path', '')
+        imported = skipped = 0
+        with db() as conn:
             conn.execute('UPDATE ledger SET is_deleted=1 WHERE is_deleted=0')
+            for row in rows:
+                try:
+                    dm_income  = row.get('income')
+                    dm_expense = row.get('expense')
+                    dm_amount  = row.get('amount', 0) or 0
 
+                    # Only derive from amount when neither income nor expense set from CSV
+                    if dm_income is None and dm_expense is None:
+                        if dm_amount > 0:
+                            dm_income = dm_amount
+                        elif dm_amount < 0:
+                            dm_expense = dm_amount  # negative = refund, keep sign
+
+                    # Recompute net amount for consistency
+                    if dm_income is not None or dm_expense is not None:
+                        dm_amount = (dm_income or 0) - (dm_expense or 0)
+
+                    dm_is_pend = row.get('is_pending', 0)
+                    cur = conn.execute("""
+                        INSERT INTO ledger
+                            (entry_date, job_code, invoice_number, category,
+                             description, vendor, is_cogs, amount, income, expense,
+                             bank_account_id, notes, status,
+                             nickname, memo, type_of_payment, is_pending)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, [
+                        row['entry_date'], row.get('job_code',''), row.get('invoice_number',''),
+                        row.get('category',''), row.get('description',''), row.get('vendor',''),
+                        row.get('is_cogs',0), dm_amount, dm_income, dm_expense,
+                        row.get('bank_account_id'), row.get('notes',''),
+                        'Pending' if dm_is_pend else (row.get('status','').strip() or 'Pending'),
+                        row.get('nickname',''), row.get('memo',''), row.get('type_of_payment',''),
+                        dm_is_pend,
+                    ])
+                    new_id = cur.lastrowid
+                    csv_receipt = row.get('receipt_filename','').strip()
+                    if csv_receipt:
+                        verified = verify_receipt(csv_receipt, receipts_folder)
+                        conn.execute("UPDATE ledger SET receipt_filename=?, receipt_verified=? WHERE id=?",
+                                     [csv_receipt, 1 if verified else 0, new_id])
+                    else:
+                        _auto_receipt(conn, new_id, row['entry_date'],
+                                      row.get('job_code',''), row.get('vendor',''), row.get('amount',0))
+                    imported += 1
+                except Exception:
+                    skipped += 1
+        msg = f"Replaced ledger: imported {imported} entries"
+        if skipped: msg += f", skipped {skipped}"
+        return jsonify({'success': True, 'inserted': imported, 'skipped': skipped, 'message': msg})
+
+    # ── APPEND mode: run duplicate check then show ledger preview page ─────
+    conn = _gc()
+    try:
+        patterns = _get_recurring_patterns(conn)
         for row in rows:
-            if not row.get('import', True):
-                skipped += 1
-                continue
-            try:
-                cur = conn.execute("""
-                    INSERT INTO ledger
-                        (entry_date, job_code, invoice_number, category,
-                         description, vendor, is_cogs, amount,
-                         bank_account_id, notes, status,
-                         nickname, memo, type_of_payment)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,'Pending',?,?,?)
-                """, [
-                    row['entry_date'],
-                    row.get('job_code', ''),
-                    row.get('invoice_number', ''),
-                    row.get('category', ''),
-                    row.get('description', ''),
-                    row.get('vendor', ''),
-                    row.get('is_cogs', 0),
-                    row['amount'],
-                    row.get('bank_account_id'),
-                    row.get('notes', ''),
-                    row.get('nickname', ''),
-                    row.get('memo', ''),
-                    row.get('type_of_payment', ''),
-                ])
-                new_id = cur.lastrowid
-                csv_receipt = row.get('receipt_filename', '').strip()
-                if csv_receipt:
-                    verified = verify_receipt(csv_receipt, receipts_folder)
-                    conn.execute(
-                        "UPDATE ledger SET receipt_filename=?, receipt_verified=? WHERE id=?",
-                        [csv_receipt, 1 if verified else 0, new_id]
-                    )
-                else:
-                    _auto_receipt(conn, new_id,
-                                  row['entry_date'],
-                                  row.get('job_code', ''),
-                                  row.get('vendor', ''),
-                                  row['amount'])
-                imported += 1
-            except Exception:
-                skipped += 1
+            row['dup_status'] = _check_import_row_duplicate(conn, row, patterns)
+    finally:
+        conn.close()
 
-    msg = f"Imported {imported} ledger entries"
-    if skipped:
-        msg += f", skipped {skipped}"
-    if errors:
-        msg += f" ({len(errors)} parse warning(s))"
-    return jsonify({'success': True, 'inserted': imported, 'skipped': skipped, 'message': msg})
+    # Save to temp file (same mechanism as /ledger/import)
+    token    = str(_uuid.uuid4())
+    tmp_path = os.path.join(_tf.gettempdir(), f'kbweb_import_{token}.json')
+    with open(tmp_path, 'w', encoding='utf-8') as tmp:
+        import json as _json
+        _json.dump(rows, tmp)
+
+    config        = get_config()
+    badges        = _get_badges()
+    bank_accounts = _get_bank_accounts()
+
+    # Render the same preview page as the ledger import
+    from flask import render_template as _rt
+    from routes_phase3 import _get_config as _rc
+    return _rt('ledger_import_preview.html',
+        config=config, badges=badges,
+        rows=rows,
+        errors=errors,
+        default_job='',
+        default_acct=None,
+        sign_convention='auto',
+        bank_accounts=bank_accounts,
+        filename='data-management-import.csv',
+        import_token=token,
+    )
 
 
 
 # Maps logical table key → (db_table, label, exportable_cols, has_soft_delete)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contractor / Supplier import — maps user-friendly CSV columns to DB columns
+# ─────────────────────────────────────────────────────────────────────────────
+# Map from CSV Tax Category → vendor_type DB value
+_TAX_CAT_TO_VENDOR_TYPE = {
+    'contract labor':       'Subcontractor',
+    'subcontractor':        'Subcontractor',
+    'materials & supplies': 'Supplier',
+    'materials and supplies':'Supplier',
+    'supplier':             'Supplier',
+    'professional services':'Service Provider',
+    'office expense':       'Service Provider',
+    'repairs & maintenance':'Subcontractor',
+    'utilities':            'Service Provider',
+    'licenses & permits':   'Government/Tax',
+    'licenses and permits': 'Government/Tax',
+    'insurance':            'Service Provider',
+    'other expenses':       'Other',
+}
+
+# CSV column → DB column aliases for contractors import
+_CONTRACTOR_COL_ALIASES = {
+    'type':              'trade_type',
+    'trade type':        'trade_type',
+    'trade_type':        'trade_type',
+    'tax category':      None,          # handled separately → vendor_type
+    'tax_category':      None,
+    'name':              'company_name',
+    'company':           'company_name',
+    'company name':      'company_name',
+    'company_name':      'company_name',
+    'contact person':    'contact_person',
+    'contact':           'contact_person',
+    'contact_person':    'contact_person',
+    'phone':             'phone',
+    'cell / alt phone':  'cell',
+    'cell/alt phone':    'cell',
+    'cell':              'cell',
+    'alt phone':         'cell',
+    'email':             'email',
+    'website':           'website',
+    'address':           'address',
+    'labels':            'notes',
+    'notes':             'notes',
+    'license_number':    'license_number',
+    'license number':    'license_number',
+    'vendor_type':       'vendor_type',
+    'requires_1099':     'requires_1099',
+    'rank_preference':   'rank_preference',
+}
+
+
+def _dm_contractors_import(content: str, mode: str = 'append'):
+    """Import contractors CSV with column alias mapping.
+    Handles the user's workbook export format:
+    Type, Tax Category, Name, Contact Person, Phone, Cell / Alt Phone, Email, Website, Address, Labels
+    """
+    import csv as _csv, io as _io
+    reader = _csv.DictReader(_io.StringIO(content))
+    if not reader.fieldnames:
+        return jsonify({'error': 'Empty or invalid CSV'}), 400
+
+    # Normalise fieldnames for lookup
+    def norm_key(k): return (k or '').strip().lower()
+    csv_fields = {norm_key(f): f for f in reader.fieldnames}
+
+    rows = list(reader)
+    if not rows:
+        return jsonify({'inserted': 0, 'skipped': 0, 'message': 'No data rows'}), 200
+
+    conn = get_connection()
+    try:
+        if mode == 'replace':
+            _do_backup('pre-import')
+            conn.execute('UPDATE contractors SET is_deleted=1 WHERE is_deleted=0')
+
+        inserted = skipped = 0
+        for row in rows:
+            # Map CSV columns to DB columns using aliases
+            mapped = {}
+            vendor_type = None
+
+            for csv_col_norm, csv_col_orig in csv_fields.items():
+                val = (row.get(csv_col_orig) or '').strip()
+                db_col = _CONTRACTOR_COL_ALIASES.get(csv_col_norm)
+
+                if csv_col_norm in ('tax category', 'tax_category'):
+                    # Convert tax category → vendor_type
+                    vendor_type = _TAX_CAT_TO_VENDOR_TYPE.get(val.lower(), 'Subcontractor')
+                    continue
+
+                if db_col is None:
+                    continue  # explicitly skipped
+                if val:
+                    mapped[db_col] = val
+
+            # company_name is required
+            if not mapped.get('company_name'):
+                skipped += 1
+                continue
+
+            # Apply vendor_type — either from Tax Category or default
+            if 'vendor_type' not in mapped:
+                mapped['vendor_type'] = vendor_type or 'Subcontractor'
+
+            # Validate vendor_type against allowed values
+            allowed = {'Subcontractor', 'Supplier', 'Service Provider', 'Government/Tax', 'Other'}
+            if mapped['vendor_type'] not in allowed:
+                mapped['vendor_type'] = 'Other'
+
+            # Check for duplicate by company_name (avoid re-inserting same contractor)
+            if mode == 'append':
+                exists = conn.execute(
+                    'SELECT id FROM contractors WHERE company_name=? AND is_deleted=0',
+                    [mapped['company_name']]
+                ).fetchone()
+                if exists:
+                    skipped += 1
+                    continue
+
+            mapped['is_deleted'] = 0
+
+            cols = [c for c in mapped if c not in ('created_at', 'updated_at')]
+            vals = [mapped[c] for c in cols]
+            col_sql = ', '.join(cols + ['created_at', 'updated_at', 'is_deleted'])
+            ph = ', '.join(['?'] * len(vals) + ["datetime('now')", "datetime('now')", '?'])
+
+            try:
+                conn.execute(f'INSERT INTO contractors ({col_sql}) VALUES ({ph})', vals + [0])
+                inserted += 1
+            except Exception:
+                skipped += 1
+
+        conn.commit()
+        return jsonify({
+            'success': True,
+            'inserted': inserted,
+            'skipped': skipped,
+            'message': f'Imported {inserted} contractor(s). {skipped} skipped (duplicates or missing name).'
+        })
+    except Exception as e:
+        return jsonify({'error': f'Import failed: {str(e)}'}), 500
+    finally:
+        conn.close()
+
 DATA_TABLES = {
     'ledger':          ('ledger',          'Ledger Entries',      True,  True),
     'clients':         ('clients',         'Clients',             True,  True),
@@ -2110,9 +2649,10 @@ DATA_TABLES = {
 
 @app.route('/api/data/table-export')
 def api_data_table_export():
-    """Export a single table as CSV."""
+    """Export a single table as CSV. Pass empty=1 for headers-only template."""
     key = request.args.get('table', '').strip()
     include_deleted = request.args.get('include_deleted', '0') == '1'
+    empty_template  = request.args.get('empty', '0') == '1'
     if key not in DATA_TABLES:
         return jsonify({'error': f'Unknown table: {key}'}), 400
 
@@ -2121,6 +2661,17 @@ def api_data_table_export():
     try:
         cols_info = conn.execute(f'PRAGMA table_info({db_table})').fetchall()
         col_names = [c[1] for c in cols_info]
+
+        if empty_template:
+            # Return headers-only CSV as an import template
+            def generate_empty():
+                yield ','.join(f'"{c}"' for c in col_names) + '\n'
+            fname = f'{key}_template.csv'
+            return Response(
+                stream_with_context(generate_empty()),
+                mimetype='text/csv',
+                headers={'Content-Disposition': f'attachment; filename={fname}'}
+            )
 
         if has_delete and not include_deleted:
             rows = conn.execute(
@@ -2181,6 +2732,11 @@ def api_data_table_import():
     if key == 'ledger' and db_table == 'ledger':
         return _dm_ledger_import(content, mode)
 
+    # For contractors, delegate to the dedicated import that handles column aliases
+    # (Type, Tax Category, Name, Contact Person, etc.)
+    if key == 'contractors' and db_table == 'contractors':
+        return _dm_contractors_import(content, mode)
+
     conn = get_connection()
     try:
         # Get actual DB columns
@@ -2240,6 +2796,83 @@ def api_data_table_import():
     finally:
         conn.close()
 
+
+
+
+@app.route('/api/data/table-purge', methods=['POST'])
+def api_data_table_purge():
+    """Permanently hard-delete all soft-deleted (is_deleted=1) rows from a table.
+    This frees space and clears the deleted count shown in Data Management.
+    A backup is created first."""
+    data = request.json or {}
+    key  = data.get('table', '').strip()
+    if key not in DATA_TABLES:
+        return jsonify({'error': f'Unknown table: {key}'}), 400
+
+    db_table, label, _, has_delete = DATA_TABLES[key]
+    if not has_delete:
+        return jsonify({'error': 'Table does not support soft-delete'}), 400
+
+    # Count deleted rows first (outside transaction)
+    conn_check = get_connection()
+    try:
+        count = conn_check.execute(
+            f'SELECT COUNT(*) FROM {db_table} WHERE is_deleted=1'
+        ).fetchone()[0]
+    finally:
+        conn_check.close()
+
+    if count == 0:
+        return jsonify({'success': True, 'purged': 0, 'label': label,
+                        'message': f'No deleted rows in {label} to purge.'})
+
+    # Backup before destructive operation (caller may opt out)
+    skip_backup = data.get('skip_backup', False)
+    if skip_backup:
+        ok, msg = True, 'skipped'
+    else:
+        ok, msg = _do_backup('pre-purge')
+
+    # Hard-delete in its own transaction
+    # First: null out ALL FK references that point to rows we're about to delete,
+    # to avoid FOREIGN KEY constraint violations on any table.
+    try:
+        with db() as conn:
+            # Disable FK enforcement during nulling so we can clean up in any order
+            conn.execute('PRAGMA foreign_keys = OFF')
+            try:
+                if db_table == 'ledger':
+                    conn.execute("""
+                        UPDATE bank_transactions
+                        SET matched_ledger_id = NULL,
+                            match_status = CASE WHEN match_status='Matched' THEN 'Unmatched' ELSE match_status END
+                        WHERE matched_ledger_id IN (
+                            SELECT id FROM ledger WHERE is_deleted=1
+                        )
+                    """)
+                elif db_table == 'employees':
+                    conn.execute("""UPDATE payroll_runs       SET emp_id=NULL WHERE emp_id IN (SELECT emp_id FROM employees WHERE is_deleted=1)""")
+                elif db_table == 'clients':
+                    conn.execute("""UPDATE jobs               SET client_id=NULL WHERE client_id IN (SELECT id FROM clients WHERE is_deleted=1)""")
+                    conn.execute("""UPDATE invoices           SET client_id=NULL WHERE client_id IN (SELECT id FROM clients WHERE is_deleted=1)""")
+                elif db_table == 'jobs':
+                    conn.execute("""UPDATE ledger             SET job_id=NULL    WHERE job_id    IN (SELECT id FROM jobs    WHERE is_deleted=1)""")
+                    conn.execute("""UPDATE invoices           SET job_id=NULL    WHERE job_id    IN (SELECT id FROM jobs    WHERE is_deleted=1)""")
+                    conn.execute("""UPDATE program_sessions   SET job_id=NULL    WHERE job_id    IN (SELECT id FROM jobs    WHERE is_deleted=1)""")
+                elif db_table == 'contractors':
+                    conn.execute("""UPDATE certificates       SET contractor_id=NULL WHERE contractor_id IN (SELECT id FROM contractors WHERE is_deleted=1)""")
+                elif db_table == 'bank_accounts':
+                    conn.execute("""UPDATE bank_transactions  SET bank_account_id=NULL WHERE bank_account_id IN (SELECT id FROM bank_accounts WHERE is_deleted=1)""")
+                    conn.execute("""UPDATE bank_statements    SET bank_account_id=NULL WHERE bank_account_id IN (SELECT id FROM bank_accounts WHERE is_deleted=1)""")
+                conn.execute(f'DELETE FROM {db_table} WHERE is_deleted=1')
+            finally:
+                conn.execute('PRAGMA foreign_keys = ON')
+    except Exception as e:
+        return jsonify({'error': f'Purge failed: {str(e)}'}), 500
+
+    backup_note = '' if ok else f' (⚠ no backup: {msg})'
+    return jsonify({'success': True, 'purged': count, 'label': label,
+                    'message': f'Permanently deleted {count} row(s) from {label}.{backup_note}'})
 
 @app.route('/api/data/table-clear', methods=['POST'])
 def api_data_table_clear():
@@ -2417,14 +3050,24 @@ def api_shutdown():
 @app.errorhandler(404)
 def not_found(e):
     config = get_config()
-    return render_template('error.html', config=config, error=404,
-                           message="Page not found"), 404
+    try:
+        badges = get_nav_badges()
+    except Exception:
+        badges = {}
+    return render_template('error.html', config=config, badges=badges,
+                           error=404, message="Page not found"), 404
 
 @app.errorhandler(500)
 def server_error(e):
+    import traceback, logging
+    logging.error("500 error: %s\n%s", e, traceback.format_exc())
     config = get_config()
-    return render_template('error.html', config=config, error=500,
-                           message=str(e)), 500
+    try:
+        badges = get_nav_badges()
+    except Exception:
+        badges = {}
+    return render_template('error.html', config=config, badges=badges,
+                           error=500, message=str(e)), 500
 
 
 if __name__ == '__main__':
@@ -2435,12 +3078,22 @@ if __name__ == '__main__':
     print(f"  Database: {db_path}")
     print("  Open: http://localhost:5000")
 
-    # Auto-backup on every launch
-    ok, msg = _do_backup('startup')
-    if ok:
-        print(f"  ✅ Auto-backup: {msg}")
+    # Auto-backup on startup — only if auto_backup_mode allows it
+    try:
+        _ab_conn = get_connection()
+        _ab_mode = (_ab_conn.execute(
+            "SELECT auto_backup_mode FROM company_config LIMIT 1"
+        ).fetchone() or {})  
+        _ab_mode = (_ab_mode['auto_backup_mode'] if hasattr(_ab_mode, '__getitem__') and 'auto_backup_mode' in _ab_mode.keys() else None) or 'startup'
+        _ab_conn.close()
+    except Exception:
+        _ab_mode = 'startup'
+    if _ab_mode in ('startup', 'both'):
+        ok, msg = _do_backup('startup')
+        if ok:  print(f"  ✅ Auto-backup: {msg}")
+        else:   print(f"  ⚠️  Auto-backup skipped: {msg}")
     else:
-        print(f"  ⚠️  Auto-backup skipped: {msg}")
+        print(f"  ℹ️  Auto-backup skipped (mode: {_ab_mode})")
 
     # Auto-verify receipts (scan folder vs DB)
     try:
@@ -2449,12 +3102,7 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"  ⚠️  Receipt scan skipped: {e}")
 
-    # Auto-scan cert PDFs
-    try:
-        matched = _scan_cert_pdfs()
-        print(f"  📜 Cert PDF scan: {matched} matched")
-    except Exception as e:
-        print(f"  ⚠️  Cert PDF scan skipped: {e}")
+    # COI scan removed from startup — use Settings → Scan COI PDFs button instead
 
     print("=" * 60)
     # use_reloader=False prevents Flask from running startup code twice

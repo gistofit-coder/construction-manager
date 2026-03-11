@@ -1,33 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Contractors/Suppliers — {{ config.company_name or 'Construction Manager' }}
-<script>
-function editRating(id, current) {
-  const stars = ['None', '⭐', '⭐⭐', '⭐⭐⭐', '⭐⭐⭐⭐', '⭐⭐⭐⭐⭐'];
-  const opts = stars.map((s, i) => `<option value="${i}" ${i==current?'selected':''}>${s}</option>`).join('');
-  const html = `<div id="rating-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center">
-    <div style="background:var(--surface);border-radius:8px;padding:20px;min-width:220px;box-shadow:0 4px 24px rgba(0,0,0,.3)">
-      <h4 style="margin-bottom:12px">Set Preference Rating</h4>
-      <select id="rating-val" style="width:100%;margin-bottom:12px;padding:6px">${opts}</select>
-      <div class="flex gap-8">
-        <button class="btn btn-outline btn-sm" onclick="document.getElementById('rating-modal').remove()">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="saveRating(${id})">Save</button>
-      </div>
-    </div>
-  </div>`;
-  document.body.insertAdjacentHTML('beforeend', html);
-}
-async function saveRating(id) {
-  const v = document.getElementById('rating-val').value;
-  document.getElementById('rating-modal').remove();
-  const r = await fetch(`/contractors/${id}/patch`, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({rank_preference: parseInt(v)})
-  });
-  if (r.ok) location.reload();
-  else alert('Failed to save rating.');
-}
-</script>
-{% endblock %}
+{% block title %}Contractors/Suppliers — {{ config.company_name or 'Construction Manager' }}{% endblock %}
 {% block topbar_title %}🔨 Contractors / Suppliers{% endblock %}
 {% block breadcrumb %}<a href="/">Home</a> / Contractors/Suppliers{% endblock %}
 
@@ -102,10 +74,16 @@ async function saveRating(id) {
       <tbody>
         {% for c in contractors %}
         <tr>
-          <td style="cursor:pointer" onclick="editRating({{ c.id }}, {{ c.rank_preference or 0 }})" title="Click to change rating">{% for i in range(c.rank_preference | int) %}⭐{% endfor %}{% if not c.rank_preference or c.rank_preference == 0 %}<span class="text-dim" style="font-size:10px">Rate</span>{% endif %}</td>
-          <td>
+          <td style="cursor:pointer;white-space:nowrap" data-rating="{{ c.rank_preference or 0 }}"
+              onclick="editRating({{ c.id }}, {{ c.rank_preference or 0 }}, this)"
+              title="Click to set preference rating">{% for i in range(c.rank_preference | int) %}⭐{% endfor %}{% if not c.rank_preference or c.rank_preference == 0 %}<span class="text-dim" style="font-size:10px">Rate</span>{% endif %}</td>
+          <td style="font-size:11px">
             {% if c.vendor_category %}
-            <span style="font-size:11px;color:var(--text-dim)">{{ c.vendor_category }}</span>
+              <span style="color:var(--text-dim)">{{ c.vendor_category }}</span>
+            {% elif c.trade_type %}
+              <span style="color:var(--text-dim)">{{ c.trade_type }}</span>
+            {% else %}
+              <span class="text-dim">—</span>
             {% endif %}
           </td>
           <td>
@@ -164,6 +142,9 @@ async function saveRating(id) {
             <div class="flex gap-8">
               <a href="/contractors/{{ c.id }}" class="btn btn-outline btn-xs">View</a>
               <a href="/contractors/{{ c.id }}/edit" class="btn btn-outline btn-xs">Edit</a>
+              <form id="del-con-{{ c.id }}" method="POST" action="/contractors/{{ c.id }}/delete" style="display:none"></form>
+              <button type="button" class="btn btn-danger btn-xs"
+                      onclick="(async()=>{ if(await appConfirmDanger('Archive contractor &quot;{{ c.company_name|e }}&quot;? They will be hidden from all views.','Archive Contractor?','Archive','🗑')) document.getElementById('del-con-{{ c.id }}').submit(); })()">🗑</button>
             </div>
           </td>
         </tr>
@@ -184,5 +165,51 @@ async function saveRating(id) {
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', () => initSortableTable('contractors-table'));
+
+function editRating(id, current, cell) {
+  // Close any existing popup
+  document.getElementById('rating-popup')?.remove();
+
+  const stars = ['— None', '⭐', '⭐⭐', '⭐⭐⭐', '⭐⭐⭐⭐', '⭐⭐⭐⭐⭐'];
+  const rect  = cell.getBoundingClientRect();
+
+  const popup = document.createElement('div');
+  popup.id = 'rating-popup';
+  popup.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left}px;
+    background:var(--card-bg,#1e2535);border:1px solid var(--border);border-radius:6px;
+    padding:6px 0;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.4);min-width:130px`;
+
+  stars.forEach((label, i) => {
+    const opt = document.createElement('div');
+    opt.textContent = label;
+    opt.style.cssText = `padding:6px 14px;cursor:pointer;font-size:13px;
+      ${i === current ? 'background:var(--accent-dim,rgba(56,189,248,.15));font-weight:700' : ''}`;
+    opt.addEventListener('mouseover',  () => opt.style.background = 'var(--accent-dim,rgba(56,189,248,.15))');
+    opt.addEventListener('mouseout',   () => opt.style.background = i === current ? 'var(--accent-dim,rgba(56,189,248,.15))' : '');
+    opt.addEventListener('click', async () => {
+      popup.remove();
+      const r = await fetch(`/contractors/${id}/patch`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({rank_preference: i})
+      });
+      if (r.ok) {
+        // Update cell in-place — no reload
+        cell.innerHTML = i > 0
+          ? '⭐'.repeat(i)
+          : '<span class="text-dim" style="font-size:10px">Rate</span>';
+        cell.dataset.rating = i;
+      } else {
+        showToast('Failed to save rating', 'error');
+      }
+    });
+    popup.appendChild(opt);
+  });
+
+  document.body.appendChild(popup);
+  // Close on outside click
+  setTimeout(() => document.addEventListener('click', function close(e) {
+    if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', close); }
+  }), 0);
+}
 </script>
 {% endblock %}

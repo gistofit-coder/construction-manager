@@ -87,8 +87,28 @@ def _build_ledger_where(args):
 
     q = args.get('q', '').strip()
     if q:
-        where.append("(l.vendor LIKE ? OR l.description LIKE ? OR l.invoice_number LIKE ? OR l.job_code LIKE ? OR l.nickname LIKE ?)")
-        params += [f"%{q}%"] * 5
+        # Search all user-visible text columns + amount columns
+        q_like = f"%{q}%"
+        q_amt  = q.replace('$','').replace(',','').strip()
+        amt_clauses = []
+        amt_params  = []
+        try:
+            float(q_amt)  # only add amount clause if q looks numeric
+            amt_clauses = ["CAST(l.income AS TEXT) LIKE ?",
+                           "CAST(l.expense AS TEXT) LIKE ?",
+                           "CAST(l.amount AS TEXT) LIKE ?"]
+            amt_params  = [q_like, q_like, q_like]
+        except ValueError:
+            pass
+        text_cols = [
+            "l.vendor", "l.description", "l.invoice_number", "l.job_code",
+            "l.nickname", "l.category", "l.memo", "l.type_of_payment",
+            "l.status", "l.receipt_filename"
+        ]
+        text_clause = " OR ".join(f"{c} LIKE ?" for c in text_cols)
+        all_clauses = [text_clause] + amt_clauses
+        where.append(f"({' OR '.join(all_clauses)})")
+        params += [q_like] * len(text_cols) + amt_params
 
     # Multi-value helpers
     def multi(key, col_expr):
@@ -121,10 +141,10 @@ def _build_ledger_where(args):
     sign = args.get('sign', '').strip()
     if sign == 'income':
         active['sign'] = ['income']
-        where.append("l.amount > 0")
+        where.append("(l.income IS NOT NULL OR (l.amount > 0 AND l.income IS NULL))")
     elif sign == 'expense':
         active['sign'] = ['expense']
-        where.append("l.amount < 0")
+        where.append("(l.expense IS NOT NULL OR (l.amount < 0 AND l.expense IS NULL))")
 
     receipt = args.get('receipt', '').strip()
     if receipt:
@@ -165,9 +185,16 @@ def ledger():
     try:
         # ── Filter params (multi-value aware) ──────────────────
         where, params, active_filters, q = _build_ledger_where(request.args)
-        # Remove duplicate year clause (added by both helper and manual block — clean up)
-        # The _build_ledger_where already handles everything; we just removed the old multi() call for year
+        # Pending = empty/null entry_date OR future date. Hidden by default.
+        show_pending = request.args.get('show_pending') == '1'
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        if not show_pending:
+            where.append(
+                "(l.entry_date IS NOT NULL AND l.entry_date != '' AND l.entry_date <= ?)"
+            )
+            params.append(today_str)
         where_sql = " AND ".join(where)
+
 
         page     = max(1, int(request.args.get('page', 1)))
         per_page = int(request.args.get('per_page', 50))
@@ -175,7 +202,7 @@ def ledger():
         sort_dir = request.args.get('dir', 'desc')
         _SORTABLE = {'entry_date','vendor','category','amount','job_code','description',
                      'status','invoice_number','type_of_payment','nickname','memo',
-                     'receipt_verified','coi_verified'}
+                     'receipt_filename'}
         if sort_col not in _SORTABLE: sort_col = 'entry_date'
         if sort_dir not in ('asc','desc'): sort_dir = 'desc'
 
@@ -185,9 +212,9 @@ def ledger():
         ).fetchone()[0]
         totals = conn.execute(f"""
             SELECT
-                COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) AS total_income,
-                COALESCE(SUM(CASE WHEN amount<0 THEN amount ELSE 0 END),0) AS total_expense,
-                COALESCE(SUM(amount),0) AS net
+                COALESCE(SUM(COALESCE(income,0)),0) AS total_income,
+                COALESCE(SUM(COALESCE(expense,0)),0) AS total_expense,
+                COALESCE(SUM(COALESCE(income,0) - COALESCE(expense,0)),0) AS net
             FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
             WHERE {where_sql}
@@ -195,6 +222,23 @@ def ledger():
         """, params).fetchone()
 
         # ── Rows ───────────────────────────────────────────────
+        # Build sort expression — validated against whitelist above
+        _SORT_EXPR = {
+            'entry_date':      "CASE WHEN l.entry_date='' OR l.entry_date IS NULL THEN date('now') ELSE l.entry_date END",
+            'amount':          "COALESCE(l.income, CASE WHEN l.expense IS NOT NULL THEN -l.expense ELSE l.amount END, 0)",
+            'vendor':          'LOWER(l.vendor)',
+            'category':        'LOWER(l.category)',
+            'job_code':        'LOWER(l.job_code)',
+            'description':     'LOWER(l.description)',
+            'status':          'LOWER(l.status)',
+            'invoice_number':  'l.invoice_number',
+            'type_of_payment': 'LOWER(l.type_of_payment)',
+            'nickname':        'LOWER(l.nickname)',
+            'memo':            'LOWER(l.memo)',
+            'receipt_filename':'LOWER(l.receipt_filename)',
+        }
+        sort_expr = _SORT_EXPR.get(sort_col, "CASE WHEN l.entry_date='' OR l.entry_date IS NULL THEN date('now') ELSE l.entry_date END")
+
         rows = conn.execute(f"""
             SELECT l.*,
                    ba.account_name,
@@ -204,7 +248,9 @@ def ledger():
             LEFT JOIN bank_accounts ba ON l.bank_account_id = ba.id
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
             WHERE {where_sql}
-            ORDER BY l.{sort_col} {sort_dir}, l.id {sort_dir}
+            ORDER BY
+              {sort_expr} {sort_dir},
+              l.id {sort_dir}
             LIMIT ? OFFSET ?
         """, params + [per_page, (page-1)*per_page]).fetchall()
 
@@ -250,9 +296,9 @@ def ledger():
         yr = datetime.now().year
         ytd = conn.execute("""
             SELECT
-                COALESCE(SUM(CASE WHEN amount>0 THEN amount ELSE 0 END),0) AS ytd_income,
-                COALESCE(SUM(CASE WHEN amount<0 THEN amount ELSE 0 END),0) AS ytd_expense,
-                COALESCE(SUM(amount),0) AS ytd_net
+                COALESCE(SUM(COALESCE(income,0)),0) AS ytd_income,
+                COALESCE(SUM(COALESCE(expense,0)),0) AS ytd_expense,
+                COALESCE(SUM(COALESCE(income,0) - COALESCE(expense,0)),0) AS ytd_net
             FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
             WHERE l.is_deleted=0 AND l.entry_date >= ? AND l.entry_date < ?
@@ -291,7 +337,9 @@ def ledger():
             all_pay_types=[r['type_of_payment'] for r in pay_types_rows],
             year=yr,
             today=datetime.now().strftime('%Y-%m-%d'),
+            show_pending=show_pending,
         )
+
     finally:
         conn.close()
 
@@ -359,31 +407,49 @@ def ledger_edit(row_id):
 def _ledger_save(row_id, data):
     entry_date_raw = (data.get('entry_date') or '').strip()
     vendor     = (data.get('vendor') or '').strip()
-    amount_raw = (data.get('amount') or '').strip()
+    amount_raw = str(data.get('amount') if data.get('amount') is not None else '').strip()
     category   = (data.get('category') or '').strip()
 
-    # Pending entries: store today's date internally so NOT NULL is satisfied
+    # Pending = no date given or explicit 'pending'/'tbd'
     is_pending = 1 if entry_date_raw.lower() in ('pending','pend','tbd','') else 0
-    entry_date = datetime.now().strftime('%Y-%m-%d') if is_pending else entry_date_raw
+    entry_date = '' if is_pending else entry_date_raw
 
-    errors = []
-    if not entry_date:
-        errors.append('entry_date is required')
-    if amount_raw == '':
-        errors.append('amount is required')
-    if errors:
-        if request.is_json:
-            return jsonify({'error': '; '.join(errors)}), 400
-        flash('; '.join(errors), 'error')
-        return redirect(url_for('phase3.ledger'))
+    # amount_raw validation happens inside has_split block below
+    # (income/expense submissions don't send 'amount' at all)
 
-    try:
-        amount = float(str(amount_raw).replace(',','').replace('$',''))
-    except ValueError:
-        if request.is_json:
-            return jsonify({'error': 'Invalid amount'}), 400
-        flash('Invalid amount', 'error')
-        return redirect(url_for('phase3.ledger'))
+    # Support income/expense split fields (either or both may be sent)
+    income_raw  = data.get('income')
+    expense_raw = data.get('expense')
+    has_split = income_raw is not None or expense_raw is not None
+
+    if has_split:
+        # Frontend sent income and/or expense directly (can be negative)
+        def _to_float(v):
+            if v is None or str(v).strip() == '': return None
+            try: return float(str(v).replace(',','').replace('$',''))
+            except ValueError: return None
+        income_val  = _to_float(income_raw)
+        expense_val = _to_float(expense_raw)
+        if income_val is None and expense_val is None:
+            if request.is_json: return jsonify({'error': 'Enter income or expense amount'}), 400
+            flash('Enter income or expense amount', 'error')
+            return redirect(url_for('phase3.ledger'))
+        # amount = net for backwards compat (income contributes +, expense contributes -)
+        amount = (income_val or 0) - (expense_val or 0)
+    else:
+        # Legacy path: single 'amount' field (negative = expense)
+        income_val  = None
+        expense_val = None
+        try:
+            amount = float(str(amount_raw).replace(',','').replace('$',''))
+        except ValueError:
+            if request.is_json: return jsonify({'error': 'Invalid amount'}), 400
+            flash('Invalid amount', 'error')
+            return redirect(url_for('phase3.ledger'))
+        # Derive income/expense from sign
+        income_val  = amount if amount > 0 else None
+        # Negative amount = expense refund; keep sign so it shows green ↩
+        expense_val = amount if amount < 0 else None  # -50 stays -50
 
     job_code      = (data.get('job_code') or '').strip()
     description   = (data.get('description') or '').strip()
@@ -417,13 +483,13 @@ def _ledger_save(row_id, data):
                 UPDATE ledger SET
                     entry_date=?, nickname=?, job_code=?, invoice_number=?, status=?,
                     category=?, description=?, vendor=?, is_cogs=?,
-                    amount=?, type_of_payment=?, memo=?, bank_account_id=?, notes=?,
+                    amount=?, income=?, expense=?, type_of_payment=?, memo=?, bank_account_id=?, notes=?,
                     is_pending=?,
                     updated_at=datetime('now')
                 WHERE id=?
             """, [entry_date, nickname, job_code, invoice_number, status,
                   category, description, vendor, is_cogs,
-                  amount, type_of_payment, memo, bank_acct_id, notes,
+                  amount, income_val, expense_val, type_of_payment, memo, bank_acct_id, notes,
                   is_pending, row_id])
 
             # Re-generate receipt filename if key fields changed
@@ -443,12 +509,12 @@ def _ledger_save(row_id, data):
                 INSERT INTO ledger
                     (entry_date, nickname, job_code, invoice_number, status,
                      category, description, vendor, is_cogs,
-                     amount, type_of_payment, memo, bank_account_id, notes,
+                     amount, income, expense, type_of_payment, memo, bank_account_id, notes,
                      is_pending)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, [entry_date, nickname, job_code, invoice_number, status,
                   category, description, vendor, is_cogs,
-                  amount, type_of_payment, memo, bank_acct_id, notes,
+                  amount, income_val, expense_val, type_of_payment, memo, bank_acct_id, notes,
                   is_pending])
             new_id = cur.lastrowid
 
@@ -474,7 +540,11 @@ def _ledger_save(row_id, data):
 @phase3.route('/ledger/<int:row_id>/delete', methods=['POST'])
 def ledger_delete(row_id):
     with db() as conn:
+        old_row = conn.execute("SELECT * FROM ledger WHERE id=?", [row_id]).fetchone()
         soft_delete(conn, 'ledger', row_id)
+        log_action(conn, 'ledger', row_id, 'DELETE',
+                   old_data=dict(old_row) if old_row else {},
+                   user_label=f'Deleted ledger #{row_id}: {old_row["description"] if old_row else ""}')
     if request.is_json:
         return jsonify({'success': True})
     flash('Entry deleted (use Undo to restore).', 'success')
@@ -487,7 +557,7 @@ def ledger_delete(row_id):
 
 LEDGER_EDITABLE = {
     'entry_date', 'nickname', 'job_code', 'invoice_number', 'status',
-    'category', 'description', 'vendor', 'amount',
+    'category', 'description', 'vendor', 'amount', 'income', 'expense',
     'type_of_payment', 'memo', 'bank_account_id', 'notes', 'receipt_filename',
     'receipt_verified', 'coi_verified', 'duplicate_flag', 'is_cogs'
 }
@@ -600,6 +670,37 @@ def api_ledger_patch(row_id):
                 if cat:
                     conn.execute("UPDATE ledger SET category=? WHERE id=?", [cat, row_id])
                     r['category'] = cat
+
+        # When income or expense is patched, recompute amount and clear the other
+        if field in ('income', 'expense'):
+            # value=None/null/'' → clear the column only, don't touch the other column
+            is_clear = (value is None or str(value).strip() in ('', 'null', 'None'))
+            if is_clear:
+                v = None
+            else:
+                try:
+                    v = float(str(value).replace(',','').replace('$',''))
+                except ValueError:
+                    v = None
+                    is_clear = True
+            if is_clear:
+                # Just clear this one column; recompute amount from whatever remains
+                conn.execute(f"UPDATE ledger SET {field}=NULL, updated_at=datetime('now') WHERE id=?", [row_id])
+                remaining = conn.execute("SELECT income, expense FROM ledger WHERE id=?", [row_id]).fetchone()
+                inc_r = remaining['income'] or 0 if remaining else 0
+                exp_r = remaining['expense'] or 0 if remaining else 0
+                new_amount = inc_r - exp_r
+            elif field == 'income':
+                # Setting income — clear expense
+                conn.execute("UPDATE ledger SET income=?, expense=NULL, updated_at=datetime('now') WHERE id=?", [v, row_id])
+                new_amount = v if v is not None else 0
+            else:  # expense
+                # Setting expense — clear income
+                conn.execute("UPDATE ledger SET expense=?, income=NULL, updated_at=datetime('now') WHERE id=?", [v, row_id])
+                new_amount = -(v if v is not None else 0)
+            conn.execute("UPDATE ledger SET amount=? WHERE id=?", [new_amount, row_id])
+            r[field] = v
+            r['amount'] = new_amount
 
         if field == 'entry_date' and value:
             # If a real date is set on a pending row, clear the pending flag
@@ -765,6 +866,8 @@ def _parse_import_csv(content_raw, skip_header, sign_convention, default_job, de
         'type of payment': 'type_of_payment',
         'receipt verified': 'receipt_verified', 'rcpt verified': 'receipt_verified',
         'coi verified': 'coi_verified', 'coi_verified': 'coi_verified',
+        # status column (present in re-exported CSVs)
+        'status': 'status',
         # income / expense split columns (handled specially below)
         'income': '_income', 'expense': '_expense',
         'credit': '_income', 'withdrawal': '_expense',
@@ -788,30 +891,51 @@ def _parse_import_csv(content_raw, skip_header, sign_convention, default_job, de
             csv_is_pending = raw_date.lower() in ('pending', 'pend', 'tbd', '')                              or 'pending' in raw_date.lower()
             entry_date = _parse_date(raw_date)
             if not entry_date:
-                if csv_is_pending:
-                    entry_date = datetime.now().strftime('%Y-%m-%d')
-                else:
-                    errors.append(f"Row {i}: can't parse date '{raw_date}'")
-                    continue
+                # No date parsed — treat as pending regardless of raw value
+                csv_is_pending = True
+                entry_date = ''  # store empty; pending filter will hide it by default
 
             # Parse amount — supports: amount column OR income+expense split columns
             amount = None
             has_income_exp = '_income' in norm or '_expense' in norm
 
+            income_val_csv  = None
+            expense_val_csv = None
             if has_income_exp:
                 # income/expense split takes priority (handles re-import of exported ledger)
                 try:
                     def _clean_num(s):
-                        return (s or '').strip().replace(',', '').replace('$', '') or '0'
-                    inc = float(_clean_num(norm.get('_income')))
-                    exp = float(_clean_num(norm.get('_expense')))
-                    if inc and exp:
-                        # Both filled — income wins; shouldn't happen in well-formed export
+                        s2 = (s or '').strip().replace(',', '').replace('$', '')
+                        return s2 if s2 not in ('', '0') else None
+                    inc_raw = _clean_num(norm.get('_income'))
+                    exp_raw = _clean_num(norm.get('_expense'))
+                    inc = float(inc_raw) if inc_raw is not None else None
+                    exp = float(exp_raw) if exp_raw is not None else None
+                    if inc is not None and exp is not None:
+                        # Both Income and Expense columns have values.
+                        #
+                        # Case A — Export artifact refund: old buggy export wrote Income=X for a
+                        # refund row that only had Expense=-X. Detected when: expense<0 AND
+                        # income ≈ abs(expense). Fix: drop phantom income, keep expense=-X.
+                        if exp < 0 and abs(abs(inc) - abs(exp)) < 0.02:
+                            income_val_csv  = None
+                            expense_val_csv = exp      # e.g. -325.47 (refund)
+                            amount          = -exp      # +325.47 (net positive, money back)
+                        else:
+                            # Case B — Genuine both-set row (e.g. income=2500 + expense=2500).
+                            income_val_csv  = inc
+                            expense_val_csv = exp
+                            amount          = inc - exp
+                    elif inc is not None:
+                        # income column — can be negative (returned income)
+                        income_val_csv = inc
                         amount = inc
-                    elif inc:
-                        amount = inc
-                    elif exp:
-                        amount = -abs(exp)
+                    elif exp is not None:
+                        # expense column — can be negative (expense refund/return)
+                        # Keep sign: positive exp = normal expense, negative exp = refund.
+                        # amount = net effect for legacy queries: positive exp → negative amount
+                        expense_val_csv = exp
+                        amount = -exp  # positive→negative amount; negative refund→positive amount
                     else:
                         amount = 0.0
                 except (ValueError, TypeError):
@@ -838,6 +962,7 @@ def _parse_import_csv(content_raw, skip_header, sign_convention, default_job, de
             nickname    = norm.get('nickname', '').strip()
             memo        = norm.get('memo', '').strip()
             pay_type    = norm.get('type_of_payment', '').strip()
+            csv_status  = norm.get('status', '').strip()  # preserve if present (e.g. re-imported export)
 
             if not category and vendor:
                 category = get_vendor_category(vendor, conn) or ''
@@ -859,6 +984,8 @@ def _parse_import_csv(content_raw, skip_header, sign_convention, default_job, de
                 'vendor':           vendor,
                 'description':      description,
                 'amount':           amount,
+                'income':           income_val_csv,
+                'expense':          expense_val_csv,
                 'category':         category,
                 'job_code':         job_code,
                 'notes':            notes,
@@ -866,6 +993,7 @@ def _parse_import_csv(content_raw, skip_header, sign_convention, default_job, de
                 'nickname':         nickname,
                 'memo':             memo,
                 'type_of_payment':  pay_type,
+                'status':           csv_status,   # '' means no Status col → default to Pending
                 'is_cogs':          is_cogs,
                 'bank_account_id':  default_acct,
                 'receipt_filename': csv_receipt,
@@ -882,36 +1010,73 @@ def _check_import_row_duplicate(conn, row, patterns=None):
     """
     Check if an incoming CSV row likely already exists in the ledger.
     Returns one of: 'exact', 'near', 'recurring', or '' (clean).
+
+    Amount matching is income/expense-aware:
+      - Incoming row carries row['amount'] (net) AND row['income']/row['expense']
+      - Existing DB rows may store value in 'amount', 'income', or 'expense'
+      - We compare effective net amount on both sides so positive income entries
+        are not missed just because one side uses the income column and the
+        other uses the amount column.
     """
     if patterns and _matches_recurring(row.get('vendor',''), row.get('amount',0), patterns):
         return 'recurring'
 
     vendor = row.get('vendor', '')
-    amount = row.get('amount', 0)
     date   = row.get('entry_date', '')
 
     if not vendor or not date:
         return ''
 
-    # Exact: same date + vendor + amount
-    exact = conn.execute("""
+    # Effective net amount of the incoming row:
+    #   income/expense columns take priority (newer schema);
+    #   fall back to amount (old schema or plain CSV import).
+    inc_in  = row.get('income')
+    exp_in  = row.get('expense')
+    amt_in  = row.get('amount', 0) or 0
+    if inc_in is not None:
+        eff_in = float(inc_in)
+    elif exp_in is not None:
+        eff_in = -float(exp_in)
+    else:
+        eff_in = float(amt_in)
+
+    # Build income/expense-aware SQL expression for effective net amount.
+    # Check which columns actually exist (old DBs may not have income/expense yet).
+    try:
+        _cols = {row[1] for row in conn.execute("PRAGMA table_info(ledger)").fetchall()}
+    except Exception:
+        _cols = {'amount'}
+    if 'income' in _cols and 'expense' in _cols:
+        eff_sql = """COALESCE(
+            CASE WHEN income  IS NOT NULL THEN income
+                 WHEN expense IS NOT NULL THEN -expense
+                 ELSE amount
+            END, 0)"""
+    else:
+        eff_sql = "COALESCE(amount, 0)"
+
+    # Exact: same date + vendor + effective amount
+    exact = conn.execute(f"""
         SELECT id FROM ledger
         WHERE is_deleted=0
-          AND vendor=? AND ABS(amount-?)< 0.01
+          AND vendor=?
+          AND ABS(({eff_sql}) - ?) < 0.01
           AND entry_date=?
         LIMIT 1
-    """, [vendor, amount, date]).fetchone()
+    """, [vendor, eff_in, date]).fetchone()
     if exact:
         return 'exact'
 
-    # Near: same vendor + amount within 3 days
-    near = conn.execute("""
+    # Near: same vendor + effective amount within 3 days
+    near = conn.execute(f"""
         SELECT id FROM ledger
         WHERE is_deleted=0
-          AND vendor=? AND ABS(amount-?)<0.01
-          AND ABS(julianday(entry_date)-julianday(?))<= 3
+          AND vendor=?
+          AND ABS(({eff_sql}) - ?) < 0.01
+          AND entry_date != ''
+          AND ABS(julianday(entry_date) - julianday(?)) <= 3
         LIMIT 1
-    """, [vendor, amount, date]).fetchone()
+    """, [vendor, eff_in, date]).fetchone()
     if near:
         return 'near'
 
@@ -944,6 +1109,10 @@ def _ledger_import_commit():
         return redirect(url_for('phase3.ledger'))
 
     imported = skipped = 0
+    # Generate a single session_id for this entire import batch
+    # so all inserted rows appear as one item in History
+    import_session_id = str(uuid.uuid4())[:12]
+    import_label      = f"CSV Import ({os.path.basename(request.form.get('import_token','import')[:8])})"
 
     with db() as conn:
         for row in rows:
@@ -954,13 +1123,49 @@ def _ledger_import_commit():
 
             try:
                 is_pend = row.get('is_pending', 0)
+                imp_income  = row.get('income')
+                imp_expense = row.get('expense')
+                imp_amount  = row.get('amount', 0) or 0
+
+                # Only derive income/expense from amount when NEITHER is set from CSV.
+                # When they come from the CSV they are already correct — do NOT override.
+                if imp_income is None and imp_expense is None:
+                    if imp_amount > 0:
+                        # Positive amount = income
+                        imp_income = imp_amount
+                    elif imp_amount < 0:
+                        # Negative amount — could be expense OR a refund.
+                        # We cannot tell from amount alone which column it belongs to,
+                        # so store in expense column with sign preserved.
+                        # Negative expense = refund (shows green ↩ in UI).
+                        imp_expense = imp_amount
+
+                # Recompute amount from income/expense for consistency
+                # (handles the case where CSV had income/expense but no amount column)
+                if imp_income is not None or imp_expense is not None:
+                    imp_amount = (imp_income or 0) - (imp_expense or 0)
+
+                # Status resolution (priority order):
+                # 1. If row was flagged as pending (no real date) → always 'Pending'
+                # 2. If the CSV had an explicit Status column → use it (e.g. 'Cleared' on re-import)
+                # 3. No status in CSV (most common for first-time imports) → 'Pending'
+                #    This ensures imported rows are visible to auto-match and reconciliation.
+                #    User can bulk-clear them after confirming they are reconciled.
+                if is_pend:
+                    imp_status = 'Pending'
+                else:
+                    csv_st = (row.get('status') or '').strip()
+                    if csv_st in ('Cleared', 'Pending'):
+                        imp_status = csv_st
+                    else:
+                        imp_status = 'Pending'  # default: importable rows start as Pending
                 cur = conn.execute("""
                     INSERT INTO ledger
                         (entry_date, job_code, invoice_number, category,
-                         description, vendor, is_cogs, amount,
+                         description, vendor, is_cogs, amount, income, expense,
                          bank_account_id, notes, status,
                          nickname, memo, type_of_payment, is_pending)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,'Pending',?,?,?,?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, [
                     row['entry_date'],
                     row.get('job_code',''),
@@ -969,9 +1174,10 @@ def _ledger_import_commit():
                     row.get('description',''),
                     row.get('vendor',''),
                     row.get('is_cogs', 0),
-                    row['amount'],
+                    imp_amount, imp_income, imp_expense,
                     row.get('bank_account_id'),
                     row.get('notes',''),
+                    imp_status,
                     row.get('nickname',''),
                     row.get('memo',''),
                     row.get('type_of_payment',''),
@@ -995,10 +1201,14 @@ def _ledger_import_commit():
                                   row['amount'])
                 log_action(conn, 'ledger', new_id, 'INSERT',
                            new_data=row,
-                           user_label=f"CSV import: {row.get('vendor','')} {row['entry_date']}")
+                           session_id=import_session_id,
+                           user_label=f"CSV import {imported+1}: {row.get('vendor','')} {row.get('entry_date','')}")
                 imported += 1
             except Exception as e:
                 skipped += 1
+
+    # Update the batch label now that we know final count
+    # (The first entry's user_label will read "CSV Import — N rows" in history grouping)
 
     # Clean up the temp file regardless of outcome
     try:
@@ -1094,15 +1304,26 @@ def _find_duplicate_groups(conn, tolerance_days=3, min_score=0.7):
     patterns = _get_recurring_patterns(conn)
 
     # Pull all non-deleted, non-dismissed rows with vendor+amount
-    rows = conn.execute("""
-        SELECT id, entry_date, vendor, amount, category, description,
-               job_code, invoice_number, duplicate_flag, type_of_payment,
-               receipt_filename, receipt_verified
+    # Schema-aware: detect whether income/expense columns exist
+    try:
+        _db_cols = {row[1] for row in conn.execute("PRAGMA table_info(ledger)").fetchall()}
+    except Exception:
+        _db_cols = set()
+    _has_inc_exp = 'income' in _db_cols and 'expense' in _db_cols
+
+    if _has_inc_exp:
+        _eff_sort = "COALESCE(income, CASE WHEN expense IS NOT NULL THEN -expense ELSE amount END, 0)"
+        _sel_cols = "id, entry_date, vendor, amount, income, expense, category, description, job_code, invoice_number, nickname, memo, status, is_pending, duplicate_flag, type_of_payment, receipt_filename, receipt_verified"
+    else:
+        _eff_sort = "COALESCE(amount, 0)"
+        _sel_cols = "id, entry_date, vendor, amount, NULL as income, NULL as expense, category, description, job_code, invoice_number, nickname, memo, status, is_pending, duplicate_flag, type_of_payment, receipt_filename, receipt_verified"
+
+    rows = conn.execute(f"""
+        SELECT {_sel_cols}
         FROM ledger
         WHERE is_deleted=0
-          AND (duplicate_flag IS NULL OR duplicate_flag != 'dismissed')
-          AND vendor != '' AND amount != 0
-        ORDER BY vendor, amount, entry_date
+          AND vendor != ''
+        ORDER BY vendor, {_eff_sort}, entry_date
     """).fetchall()
     rows = [dict(r) for r in rows]
 
@@ -1125,11 +1346,36 @@ def _find_duplicate_groups(conn, tolerance_days=3, min_score=0.7):
             if b['vendor'].lower() != a['vendor'].lower():
                 break  # sorted by vendor, so no more matches
 
-            # Amount check: within 1%
-            amt_a = abs(float(a['amount']))
-            amt_b = abs(float(b['amount']))
+            # ── Amount check (sign-aware) ───────────────────────────────
+            # +50 and -50 are NOT duplicates — one is income, one is a return
+            # Use income/expense if amount is NULL (newer entries)
+            def _eff_amount(row):
+                # Use income/expense columns first (newer schema).
+                # Fall back to amount column only when income/expense are both absent.
+                # Never short-circuit on amount=0 — a zero amount col just means
+                # the value lives in income or expense instead.
+                if row.get('income') is not None:
+                    try: return float(row['income'])
+                    except (ValueError, TypeError): pass
+                if row.get('expense') is not None:
+                    try: return -float(row['expense'])
+                    except (ValueError, TypeError): pass
+                # Legacy: amount column (old schema or explicit zero)
+                if row.get('amount') is not None:
+                    try: return float(row['amount'])
+                    except (ValueError, TypeError): pass
+                return None
+            raw_a = _eff_amount(a)
+            raw_b = _eff_amount(b)
+            if raw_a is None or raw_b is None:
+                continue  # can't compare without an amount
+            # Signs must match for any duplicate consideration
+            if (raw_a >= 0) != (raw_b >= 0):
+                continue  # opposite signs = buy vs return, skip
+            amt_a = abs(raw_a)
+            amt_b = abs(raw_b)
             if amt_a == 0 and amt_b == 0:
-                amt_match = True; score = 1.0
+                score = 1.0
             elif amt_a == 0 or amt_b == 0:
                 continue
             else:
@@ -1138,18 +1384,42 @@ def _find_duplicate_groups(conn, tolerance_days=3, min_score=0.7):
                     continue
                 score = 1.0 if ratio == 0 else 0.85
 
-            # Date check
-            try:
-                from datetime import date as _date
-                da = _date.fromisoformat(a['entry_date'])
-                db_ = _date.fromisoformat(b['entry_date'])
+            # ── Date check ─────────────────────────────────────────────
+            from datetime import date as _date
+            def _parse_date(d):
+                """Parse entry_date; returns None if blank/pending."""
+                if not d or str(d).strip().lower() in ('', 'pending', 'tbd', 'none'):
+                    return None
+                try: return _date.fromisoformat(str(d).strip())
+                except (ValueError, TypeError): return None
+            da  = _parse_date(a['entry_date'])
+            db_ = _parse_date(b['entry_date'])
+            if da is None and db_ is None:
+                day_diff = 0   # both pending — treat as same day
+            elif da is None or db_ is None:
+                day_diff = 0   # one pending — treat as same day for dup purposes
+            else:
                 day_diff = abs((da - db_).days)
-            except (ValueError, TypeError):
-                continue
 
             if day_diff == 0:
-                tier_score = 1.0
-                tier_type  = 'exact'
+                # ── Exact tier: ALL user-visible columns must match ─────
+                def _norm(v): return (v or '').strip().lower()
+                all_match = (
+                    _norm(a.get('description'))  == _norm(b.get('description'))  and
+                    _norm(a.get('memo'))          == _norm(b.get('memo'))          and
+                    _norm(a.get('category'))      == _norm(b.get('category'))      and
+                    _norm(a.get('job_code'))      == _norm(b.get('job_code'))      and
+                    _norm(a.get('invoice_number'))== _norm(b.get('invoice_number')) and
+                    _norm(a.get('nickname'))      == _norm(b.get('nickname'))      and
+                    _norm(a.get('type_of_payment'))== _norm(b.get('type_of_payment'))
+                )
+                if all_match:
+                    tier_score = 1.0
+                    tier_type  = 'exact'
+                else:
+                    # Same day/vendor/amount but some field differs = near match
+                    tier_score = 0.80
+                    tier_type  = 'near'
             elif day_diff <= tolerance_days:
                 tier_score = 0.85
                 tier_type  = 'near'
@@ -1368,6 +1638,32 @@ def api_remove_duplicates():
 
 # ── Recurring patterns ───────────────────────────────────────
 
+
+@phase3.route('/api/ledger/auto-dedupe-exact', methods=['POST'])
+def api_auto_dedupe_exact():
+    """Auto-delete EXACT duplicates only. Keeps lowest id (oldest record)."""
+    conn = get_connection()
+    try:
+        groups = _find_duplicate_groups(conn, tolerance_days=0, min_score=1.0)
+        removed = 0; kept = 0
+        dedupe_session = str(uuid.uuid4())[:12]   # all deletes appear as one history item
+        for g in groups:
+            if g['match_type'] != 'exact': continue
+            keep_id = min(e['id'] for e in g['entries'])
+            for e in g['entries']:
+                if e['id'] != keep_id:
+                    conn.execute("UPDATE ledger SET is_deleted=1, updated_at=datetime('now') WHERE id=?", [e['id']])
+                    log_action(conn, 'ledger', e['id'], 'DELETE', old_data=dict(e),
+                               session_id=dedupe_session,
+                               user_label=f"Auto-dedupe: removed #{e['id']} ({e.get('vendor','')})")
+                    removed += 1
+            kept += 1
+        conn.commit()
+        return jsonify({'success': True, 'removed': removed, 'groups': kept,
+                        'message': f'{removed} exact duplicate(s) removed across {kept} group(s). Undo via History.'})
+    finally:
+        conn.close()
+
 @phase3.route('/api/recurring-patterns', methods=['GET'])
 def api_recurring_patterns_list():
     conn = get_connection()
@@ -1475,9 +1771,27 @@ def ledger_export():
 
         def cell_value(row_dict, key):
             if key == 'income':
+                inc = row_dict.get('income')
+                if inc is not None:
+                    # Only export positive income values; negative income (returned income) exports as-is
+                    return f"{float(inc):.2f}" if float(inc) != 0 else ''
+                # Fallback to amount ONLY when expense is also None
+                # (i.e. legacy row with only amount column set)
+                # Do NOT fall back when expense has a value — that means it's a refund,
+                # and amount being positive is a side effect of expense=-X math, not real income.
+                exp = row_dict.get('expense')
+                if exp is not None:
+                    return ''  # expense column handles this row; income is empty
                 amt = float(row_dict.get('amount', 0) or 0)
                 return f"{amt:.2f}" if amt > 0 else ''
             elif key == 'expense':
+                exp = row_dict.get('expense')
+                if exp is not None:
+                    return f"{float(exp):.2f}" if float(exp) != 0 else ''
+                # Fallback to amount ONLY when income is also None
+                inc = row_dict.get('income')
+                if inc is not None:
+                    return ''  # income column handles this row; expense is empty
                 amt = float(row_dict.get('amount', 0) or 0)
                 return f"{abs(amt):.2f}" if amt < 0 else ''
             elif key == 'date':
@@ -1666,12 +1980,13 @@ def api_coi_batch():
                        cert.end_date AS coi_end_date
                 FROM contractors c
                 LEFT JOIN (
-                    SELECT contractor_id, end_date
+                    SELECT contractor_id, MAX(end_date) AS end_date
                     FROM certificates
                     WHERE is_deleted=0
                       AND (cert_type LIKE '%liability%' OR cert_type LIKE '%COI%'
-                           OR cert_type LIKE '%insurance%' OR cert_type='')
-                    ORDER BY end_date DESC LIMIT 1
+                           OR cert_type LIKE '%insurance%' OR cert_type=''
+                           OR cert_type IS NULL OR cert_type='COI')
+                    GROUP BY contractor_id
                 ) cert ON cert.contractor_id = c.id
                 WHERE c.company_name=? AND c.is_deleted=0
                 LIMIT 1

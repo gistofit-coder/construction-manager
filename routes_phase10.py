@@ -24,6 +24,14 @@ phase10 = Blueprint('phase10', __name__)
 
 MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
+# Canonical signed-amount expression for the ledger table.
+# income rows:  income=positive, expense=NULL  → positive (revenue)
+# expense rows: expense=positive, income=NULL  → negated → negative (cost)
+# legacy rows:  both NULL → falls back to legacy `amount` column
+_AMT = "COALESCE(l.income, CASE WHEN l.expense IS NOT NULL THEN -l.expense ELSE l.amount END, 0)"
+# Same but without table alias (for queries that don't alias ledger as 'l')
+_AMT_RAW = "COALESCE(income, CASE WHEN expense IS NOT NULL THEN -expense ELSE amount END, 0)"
+
 # ─────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────
@@ -42,7 +50,19 @@ def _badges():
 
 def _year_param(default=None):
     v = request.args.get('year', str(default or date.today().year))
+    if v == 'all':
+        return 'all'
     return int(v) if v and v.isdigit() else date.today().year
+
+def _year_where(year, col='entry_date', alias=None):
+    """Return (where_fragment, params) for a year filter.
+    year='all' → no date restriction.
+    Returns e.g. ("substr(l.entry_date,1,4)=?", ["2024"])
+    """
+    full_col = f"{alias}.{col}" if alias else col
+    if year == 'all':
+        return ('1=1', [])
+    return (f"substr({full_col},1,4)=?", [str(year)])
 
 def _month_param(default=None):
     return int(request.args.get('month', default or date.today().month))
@@ -84,11 +104,11 @@ def reports():
             WHERE substr(invoice_date,1,4)=? AND status IN ('Paid','Partial') AND is_deleted=0
         """, [str(year)]).fetchone()[0]
 
-        ytd_expenses = conn.execute("""
-            SELECT COALESCE(SUM(l.amount),0) FROM ledger l
+        ytd_expenses = conn.execute(f"""
+            SELECT COALESCE(SUM(CASE WHEN {_AMT} < 0 THEN ABS({_AMT}) ELSE 0 END), 0)
+            FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
             WHERE substr(l.entry_date,1,4)=? AND l.is_deleted=0
-              AND l.amount < 0
               AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
         """, [str(year)]).fetchone()[0]
 
@@ -137,91 +157,148 @@ def report_pl():
     conn   = get_connection()
     try:
         year    = _year_param()
-        years   = _available_years(conn, 'ledger', 'entry_date') or [year]
-        if year not in years: years = [year] + years
+        years   = _available_years(conn, 'ledger', 'entry_date') or [date.today().year]
+        if year != 'all' and year not in years: years = [year] + years
 
-        # Monthly revenue — ledger "Income Received" entries (primary)
-        # Falls back to invoice amount_paid if no ledger income entries
+        yw, yp = _year_where(year, 'entry_date')  # for non-aliased queries
+        ywl, ypl = _year_where(year, 'entry_date', 'l')  # aliased as l
+
         INCOME_CATS = ("'Income Received','ACCOUNT CREDIT'")
-        rev_rows = conn.execute(f"""
-            SELECT CAST(substr(entry_date,6,2) AS INTEGER) AS mo,
-                   SUM(amount) AS total
-            FROM ledger
-            WHERE substr(entry_date,1,4)=? AND is_deleted=0
-              AND category IN ({INCOME_CATS}) AND amount > 0
-            GROUP BY mo ORDER BY mo
-        """, [str(year)]).fetchall()
-        revenue_by_month = {r['mo']: float(r['total']) for r in rev_rows}
 
-        if not revenue_by_month:
-            rev_rows2 = conn.execute("""
-                SELECT CAST(substr(invoice_date,6,2) AS INTEGER) AS mo,
-                       SUM(amount_paid) AS total
-                FROM invoices
-                WHERE substr(invoice_date,1,4)=? AND status IN ('Paid','Partial') AND is_deleted=0
+        if year == 'all':
+            # ── Group by YEAR ─────────────────────────────────
+            grp = "substr(entry_date,1,4)"
+            rev_rows = conn.execute(f"""
+                SELECT {grp} AS lbl, SUM({_AMT_RAW}) AS total
+                FROM ledger WHERE is_deleted=0 AND {_AMT_RAW} > 0
+                  AND COALESCE(l.is_deleted,0)=0
+                GROUP BY lbl ORDER BY lbl
+            """.replace('l.is_deleted', 'is_deleted')).fetchall()
+            # Simpler: just query without alias
+            rev_rows = conn.execute(f"""
+                SELECT substr(entry_date,1,4) AS lbl, SUM({_AMT_RAW}) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT_RAW} > 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            exp_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM(ABS({_AMT})) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT} < 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            pay_rows = conn.execute("""
+                SELECT CAST(year AS TEXT) AS lbl, SUM(gross_pay) AS total
+                FROM payroll_runs WHERE is_deleted=0
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+
+            all_labels = sorted(set(
+                [r['lbl'] for r in rev_rows] +
+                [r['lbl'] for r in exp_rows] +
+                [r['lbl'] for r in pay_rows]
+            ))
+            rev_by = {r['lbl']: float(r['total']) for r in rev_rows}
+            exp_by = {r['lbl']: float(r['total']) for r in exp_rows}
+            pay_by = {r['lbl']: float(r['total']) for r in pay_rows}
+
+            months_data = []
+            ytd_rev = ytd_exp = ytd_pay = 0.0
+            for lbl in all_labels:
+                rev  = rev_by.get(lbl, 0.0)
+                exp  = exp_by.get(lbl, 0.0)
+                pay  = pay_by.get(lbl, 0.0)
+                total_cost = exp + pay
+                profit = rev - total_cost
+                margin = _pct(profit, rev)
+                ytd_rev += rev; ytd_exp += exp; ytd_pay += pay
+                months_data.append({
+                    'month': lbl, 'label': lbl,
+                    'revenue': rev, 'expenses': exp, 'payroll': pay,
+                    'total_cost': total_cost, 'profit': profit, 'margin': margin,
+                    'future': False,
+                })
+        else:
+            # ── Group by MONTH (single year) ──────────────────
+            rev_rows = conn.execute(f"""
+                SELECT CAST(substr(entry_date,6,2) AS INTEGER) AS mo,
+                       SUM({_AMT_RAW}) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE {ywl} AND l.is_deleted=0 AND {_AMT_RAW} > 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
                 GROUP BY mo ORDER BY mo
-            """, [str(year)]).fetchall()
-            revenue_by_month = {r['mo']: float(r['total']) for r in rev_rows2}
+            """, ypl).fetchall()
+            revenue_by_month = {r['mo']: float(r['total']) for r in rev_rows}
 
-        # Monthly expenses (ledger — exclude income/transfer categories)
-        EXCL_CATS = (
-            "'Income Received','ACCOUNT CREDIT','Credit Card Payment',"
-            "'Contribution','Distribution','Credit','Previous','Memo','KB'"
-        )
-        exp_rows = conn.execute("""
-            SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo,
-                   SUM(ABS(l.amount)) AS total
-            FROM ledger l
-            LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
-            WHERE substr(l.entry_date,1,4)=? AND l.is_deleted=0
-              AND l.amount < 0
-              AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
-            GROUP BY mo ORDER BY mo
-        """, [str(year)]).fetchall()
-        expenses_by_month = {r['mo']: float(r['total']) for r in exp_rows}
+            if not revenue_by_month:
+                inv_yw, inv_yp = _year_where(year, 'invoice_date')
+                rev_rows2 = conn.execute(f"""
+                    SELECT CAST(substr(invoice_date,6,2) AS INTEGER) AS mo,
+                           SUM(amount_paid) AS total
+                    FROM invoices
+                    WHERE {inv_yw} AND status IN ('Paid','Partial') AND is_deleted=0
+                    GROUP BY mo ORDER BY mo
+                """, inv_yp).fetchall()
+                revenue_by_month = {r['mo']: float(r['total']) for r in rev_rows2}
 
-        # Payroll by month (as expense)
-        pay_rows = conn.execute("""
-            SELECT CAST(substr(run_date,6,2) AS INTEGER) AS mo,
-                   SUM(gross_pay) AS total
-            FROM payroll_runs
-            WHERE year=? AND is_deleted=0
-            GROUP BY mo ORDER BY mo
-        """, [year]).fetchall()
-        payroll_by_month = {r['mo']: float(r['total']) for r in pay_rows}
+            exp_rows = conn.execute(f"""
+                SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo,
+                       SUM(ABS({_AMT})) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE {ywl} AND l.is_deleted=0
+                  AND {_AMT} < 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY mo ORDER BY mo
+            """, ypl).fetchall()
+            expenses_by_month = {r['mo']: float(r['total']) for r in exp_rows}
 
-        # Build 12-month table
-        months_data = []
-        ytd_rev = ytd_exp = ytd_pay = 0.0
-        for m in range(1, 13):
-            rev  = revenue_by_month.get(m, 0.0)
-            exp  = expenses_by_month.get(m, 0.0)
-            pay  = payroll_by_month.get(m, 0.0)
-            total_cost = exp + pay
-            profit = rev - total_cost
-            margin = _pct(profit, rev)
-            ytd_rev += rev; ytd_exp += exp; ytd_pay += pay
-            months_data.append({
-                'month': m, 'label': MONTHS[m-1],
-                'revenue': rev, 'expenses': exp, 'payroll': pay,
-                'total_cost': total_cost, 'profit': profit, 'margin': margin,
-                'future': m > date.today().month and year == date.today().year,
-            })
+            pay_yw, pay_yp = _year_where(year, 'run_date')
+            pay_rows = conn.execute(f"""
+                SELECT CAST(substr(run_date,6,2) AS INTEGER) AS mo,
+                       SUM(gross_pay) AS total
+                FROM payroll_runs
+                WHERE {pay_yw} AND is_deleted=0
+                GROUP BY mo ORDER BY mo
+            """, pay_yp).fetchall()
+            payroll_by_month = {r['mo']: float(r['total']) for r in pay_rows}
+
+            months_data = []
+            ytd_rev = ytd_exp = ytd_pay = 0.0
+            for m in range(1, 13):
+                rev  = revenue_by_month.get(m, 0.0)
+                exp  = expenses_by_month.get(m, 0.0)
+                pay  = payroll_by_month.get(m, 0.0)
+                total_cost = exp + pay
+                profit = rev - total_cost
+                margin = _pct(profit, rev)
+                ytd_rev += rev; ytd_exp += exp; ytd_pay += pay
+                months_data.append({
+                    'month': m, 'label': MONTHS[m-1],
+                    'revenue': rev, 'expenses': exp, 'payroll': pay,
+                    'total_cost': total_cost, 'profit': profit, 'margin': margin,
+                    'future': m > date.today().month and year == date.today().year,
+                })
 
         ytd_total_cost = ytd_exp + ytd_pay
         ytd_profit     = ytd_rev - ytd_total_cost
         ytd_margin     = _pct(ytd_profit, ytd_rev)
 
         # Expense breakdown by category (YTD, excluding income/transfer)
-        cat_rows = conn.execute("""
-            SELECT l.category, SUM(ABS(l.amount)) AS total
+        cat_rows = conn.execute(f"""
+            SELECT l.category, SUM(ABS({_AMT})) AS total
             FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
-            WHERE substr(l.entry_date,1,4)=? AND l.is_deleted=0
-              AND l.amount < 0
+            WHERE {ywl} AND l.is_deleted=0
+              AND {_AMT} < 0
               AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
             GROUP BY l.category ORDER BY total DESC LIMIT 20
-        """, [str(year)]).fetchall()
+        """, ypl).fetchall()
 
         return render_template('report_pl.html',
             config=config, badges=badges,
@@ -274,8 +351,8 @@ def report_jobs():
             """, [jc]).fetchone()[0]
 
             # COGS from ledger
-            cogs = conn.execute("""
-                SELECT COALESCE(SUM(l.amount),0) FROM ledger l
+            cogs = conn.execute(f"""
+                SELECT COALESCE(SUM(ABS({_AMT})),0) FROM ledger l
                 LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
                 WHERE l.job_code=? AND l.is_cogs=1 AND l.is_deleted=0
                   AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
@@ -346,69 +423,124 @@ def report_cashflow():
     conn   = get_connection()
     try:
         year  = _year_param()
-        years = _available_years(conn, 'ledger', 'entry_date') or [year]
+        years = _available_years(conn, 'ledger', 'entry_date') or [date.today().year]
 
-        # Inflows: money actually received — ledger "Income Received" category
-        # (also check invoices.amount_paid as fallback if no ledger income entries)
-        in_rows = conn.execute("""
-            SELECT CAST(substr(entry_date,6,2) AS INTEGER) AS mo,
-                   SUM(amount) AS total
-            FROM ledger
-            WHERE substr(entry_date,1,4)=? AND is_deleted=0
-              AND category IN ('Income Received','ACCOUNT CREDIT')
-              AND amount > 0
-            GROUP BY mo
-        """, [str(year)]).fetchall()
-        inflows = {r['mo']: float(r['total']) for r in in_rows}
+        yw, yp   = _year_where(year, 'entry_date')
+        ywl, ypl = _year_where(year, 'entry_date', 'l')
 
-        # If no ledger income, fall back to invoice payments
-        if not inflows:
-            in_rows2 = conn.execute("""
-                SELECT CAST(substr(invoice_date,6,2) AS INTEGER) AS mo,
-                       SUM(amount_paid) AS total
-                FROM invoices
-                WHERE substr(invoice_date,1,4)=? AND amount_paid > 0 AND is_deleted=0
+        if year == 'all':
+            # Group by year
+            in_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM({_AMT_RAW}) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT_RAW} > 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """.replace('l.is_deleted', 'is_deleted')).fetchall()
+            in_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM({_AMT_RAW}) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT_RAW} > 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            out_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM(ABS({_AMT})) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT} < 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            pay_rows = conn.execute("""
+                SELECT CAST(year AS TEXT) AS lbl, SUM(net_pay) AS total
+                FROM payroll_runs WHERE is_deleted=0
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+
+            all_labels = sorted(set(
+                [r['lbl'] for r in in_rows] +
+                [r['lbl'] for r in out_rows] +
+                [r['lbl'] for r in pay_rows]
+            ))
+            in_by  = {r['lbl']: float(r['total']) for r in in_rows}
+            out_by = {r['lbl']: float(r['total']) for r in out_rows}
+            pay_by = {r['lbl']: float(r['total']) for r in pay_rows}
+
+            months_data = []
+            running_balance = 0.0
+            for lbl in all_labels:
+                inflow  = in_by.get(lbl, 0.0)
+                outflow = out_by.get(lbl, 0.0) + pay_by.get(lbl, 0.0)
+                net     = inflow - outflow
+                running_balance += net
+                months_data.append({
+                    'month': lbl, 'label': lbl,
+                    'inflow': inflow, 'outflow': outflow,
+                    'net': net, 'running': running_balance,
+                    'future': False,
+                })
+        else:
+            # Group by month — use income column as inflow signal
+            in_rows = conn.execute(f"""
+                SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo,
+                       SUM({_AMT_RAW}) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE {ywl} AND l.is_deleted=0 AND {_AMT_RAW} > 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
                 GROUP BY mo
-            """, [str(year)]).fetchall()
-            inflows = {r['mo']: float(r['total']) for r in in_rows2}
+            """, ypl).fetchall()
+            inflows = {r['mo']: float(r['total']) for r in in_rows}
 
-        # Outflows: ledger expenses (everything EXCEPT income/transfer categories)
-        INCOME_CATS = (
-            "'Income Received','ACCOUNT CREDIT','Credit Card Payment',"
-            "'Contribution','Distribution','Credit','Previous','Memo','KB'"
-        )
-        out_rows = conn.execute(f"""
-            SELECT CAST(substr(entry_date,6,2) AS INTEGER) AS mo,
-                   SUM(amount) AS total
-            FROM ledger WHERE substr(entry_date,1,4)=? AND is_deleted=0
-              AND amount > 0
-              AND category NOT IN ({INCOME_CATS})
-            GROUP BY mo
-        """, [str(year)]).fetchall()
-        outflows_ledger = {r['mo']: float(r['total']) for r in out_rows}
+            # If no ledger income at all, fall back to invoice payments
+            if not inflows:
+                inv_yw, inv_yp = _year_where(year, 'invoice_date')
+                in_rows2 = conn.execute(f"""
+                    SELECT CAST(substr(invoice_date,6,2) AS INTEGER) AS mo,
+                           SUM(amount_paid) AS total
+                    FROM invoices
+                    WHERE {inv_yw} AND amount_paid > 0 AND is_deleted=0
+                    GROUP BY mo
+                """, inv_yp).fetchall()
+                inflows = {r['mo']: float(r['total']) for r in in_rows2}
 
-        # Outflows: payroll (net pay disbursed)
-        pay_rows = conn.execute("""
-            SELECT CAST(substr(run_date,6,2) AS INTEGER) AS mo,
-                   SUM(net_pay) AS total
-            FROM payroll_runs WHERE year=? AND is_deleted=0
-            GROUP BY mo
-        """, [year]).fetchall()
-        outflows_payroll = {r['mo']: float(r['total']) for r in pay_rows}
+            out_rows = conn.execute(f"""
+                SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo,
+                       SUM(ABS({_AMT})) AS total
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE {ywl} AND l.is_deleted=0
+                  AND {_AMT} < 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY mo
+            """, ypl).fetchall()
+            outflows_ledger = {r['mo']: float(r['total']) for r in out_rows}
 
-        months_data = []
-        running_balance = 0.0
-        for m in range(1, 13):
-            inflow  = inflows.get(m, 0.0)
-            outflow = outflows_ledger.get(m, 0.0) + outflows_payroll.get(m, 0.0)
-            net     = inflow - outflow
-            running_balance += net
-            months_data.append({
-                'month': m, 'label': MONTHS[m-1],
-                'inflow': inflow, 'outflow': outflow,
-                'net': net, 'running': running_balance,
-                'future': m > date.today().month and year == date.today().year,
-            })
+            pay_yw, pay_yp = _year_where(year, 'run_date')
+            pay_rows = conn.execute(f"""
+                SELECT CAST(substr(run_date,6,2) AS INTEGER) AS mo,
+                       SUM(net_pay) AS total
+                FROM payroll_runs WHERE {pay_yw} AND is_deleted=0
+                GROUP BY mo
+            """, pay_yp).fetchall()
+            outflows_payroll = {r['mo']: float(r['total']) for r in pay_rows}
+
+            months_data = []
+            running_balance = 0.0
+            for m in range(1, 13):
+                inflow  = inflows.get(m, 0.0)
+                outflow = outflows_ledger.get(m, 0.0) + outflows_payroll.get(m, 0.0)
+                net     = inflow - outflow
+                running_balance += net
+                months_data.append({
+                    'month': m, 'label': MONTHS[m-1],
+                    'inflow': inflow, 'outflow': outflow,
+                    'net': net, 'running': running_balance,
+                    'future': m > date.today().month and year == date.today().year,
+                })
 
         total_in  = sum(r['inflow']  for r in months_data)
         total_out = sum(r['outflow'] for r in months_data)
@@ -608,12 +740,13 @@ def report_categories():
     conn   = get_connection()
     try:
         year         = _year_param()
-        years        = _available_years(conn) or [year]
+        years        = _available_years(conn) or [date.today().year]
         job_filter   = request.args.get('job', '').strip()
         month_filter = request.args.get('month', '').strip()
 
-        where  = ["substr(entry_date,1,4)=?", "is_deleted=0"]
-        params = [str(year)]
+        yw, yp = _year_where(year, 'entry_date')
+        where  = [yw, "is_deleted=0"]
+        params = yp[:]
         if job_filter:
             where.append("job_code=?"); params.append(job_filter)
         if month_filter:
@@ -622,11 +755,11 @@ def report_categories():
 
         rows = conn.execute(f"""
             SELECT category,
-                   COUNT(*)       AS txn_count,
-                   SUM(amount)    AS total,
-                   AVG(amount)    AS avg_amount,
-                   MIN(entry_date) AS first_date,
-                   MAX(entry_date) AS last_date
+                   COUNT(*)            AS txn_count,
+                   SUM({_AMT_RAW})     AS total,
+                   AVG({_AMT_RAW})     AS avg_amount,
+                   MIN(entry_date)     AS first_date,
+                   MAX(entry_date)     AS last_date
             FROM ledger
             WHERE {where_sql}
             GROUP BY category
@@ -681,7 +814,9 @@ def api_category_detail():
             where.append("CAST(substr(entry_date,6,2) AS INTEGER)=?"); params.append(int(month))
 
         rows = conn.execute(
-            f"SELECT entry_date, vendor, job_code, description, amount, receipt_filename, receipt_verified "
+            f"SELECT entry_date, vendor, job_code, description, "
+            f"{_AMT_RAW} AS amount, "
+            f"receipt_filename, receipt_verified "
             f"FROM ledger WHERE {' AND '.join(where)} ORDER BY entry_date DESC LIMIT 200",
             params
         ).fetchall()
@@ -785,11 +920,11 @@ def report_snapshot():
         """, [mo_str]).fetchone()[0]
 
         # Expenses
-        expenses = conn.execute("""
-            SELECT COALESCE(SUM(l.amount),0) FROM ledger l
+        expenses = conn.execute(f"""
+            SELECT COALESCE(SUM(ABS({_AMT})),0) FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
             WHERE substr(l.entry_date,1,7)=? AND l.is_deleted=0
-              AND l.amount < 0
+              AND {_AMT} < 0
               AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
         """, [mo_str]).fetchone()[0]
 
@@ -806,12 +941,12 @@ def report_snapshot():
         """, [mo_str]).fetchone()[0]
 
         # Top expenses this month
-        top_exp = conn.execute("""
-            SELECT l.category, l.vendor, SUM(l.amount) AS total, COUNT(*) AS cnt
+        top_exp = conn.execute(f"""
+            SELECT l.category, l.vendor, SUM({_AMT}) AS total, COUNT(*) AS cnt
             FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
             WHERE substr(l.entry_date,1,7)=? AND l.is_deleted=0
-              AND l.amount < 0
+              AND {_AMT} < 0
               AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
             GROUP BY l.category ORDER BY total ASC LIMIT 8
         """, [mo_str]).fetchall()
@@ -871,19 +1006,52 @@ def api_pl_chart():
     year = _year_param()
     conn = get_connection()
     try:
-        rev_rows = conn.execute("""
+        if year == 'all':
+            # Group by year instead of month
+            rev_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM({_AMT_RAW}) AS v
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT_RAW} > 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            exp_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM(ABS({_AMT})) AS v
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT} < 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            all_years = sorted(set(
+                [r['lbl'] for r in rev_rows] + [r['lbl'] for r in exp_rows]
+            ))
+            rev = {r['lbl']: float(r['v']) for r in rev_rows}
+            exp = {r['lbl']: float(r['v']) for r in exp_rows}
+            return jsonify({
+                'labels':   all_years,
+                'revenue':  [rev.get(y, 0) for y in all_years],
+                'expenses': [exp.get(y, 0) for y in all_years],
+                'profit':   [rev.get(y,0) - exp.get(y,0) for y in all_years],
+            })
+
+        # Single year — group by month
+        yw, yp = _year_where(year, 'invoice_date')
+        rev_rows = conn.execute(f"""
             SELECT CAST(substr(invoice_date,6,2) AS INTEGER) AS mo, SUM(amount_paid) AS v
-            FROM invoices WHERE substr(invoice_date,1,4)=? AND is_deleted=0 GROUP BY mo
-        """, [str(year)]).fetchall()
-        exp_rows = conn.execute("""
-            SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo, SUM(ABS(l.amount)) AS v
+            FROM invoices WHERE {yw} AND is_deleted=0 GROUP BY mo
+        """, yp).fetchall()
+        ywl, ypl = _year_where(year, 'entry_date', 'l')
+        exp_rows = conn.execute(f"""
+            SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo, SUM(ABS({_AMT})) AS v
             FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
-            WHERE substr(l.entry_date,1,4)=? AND l.is_deleted=0
-              AND l.amount < 0
+            WHERE {ywl} AND l.is_deleted=0
+              AND {_AMT} < 0
               AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
             GROUP BY mo
-        """, [str(year)]).fetchall()
+        """, ypl).fetchall()
 
         rev = {r['mo']: float(r['v']) for r in rev_rows}
         exp = {r['mo']: float(r['v']) for r in exp_rows}
@@ -903,19 +1071,53 @@ def api_cashflow_chart():
     year = _year_param()
     conn = get_connection()
     try:
-        in_rows = conn.execute("""
-            SELECT CAST(substr(invoice_date,6,2) AS INTEGER) AS mo, SUM(amount_paid) AS v
-            FROM invoices WHERE substr(invoice_date,1,4)=? AND is_deleted=0 GROUP BY mo
-        """, [str(year)]).fetchall()
-        out_rows = conn.execute("""
-            SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo, SUM(ABS(l.amount)) AS v
+        if year == 'all':
+            in_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM({_AMT_RAW}) AS v
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT_RAW} > 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            out_rows = conn.execute(f"""
+                SELECT substr(l.entry_date,1,4) AS lbl, SUM(ABS({_AMT})) AS v
+                FROM ledger l
+                LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+                WHERE l.is_deleted=0 AND {_AMT} < 0
+                  AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+                GROUP BY lbl ORDER BY lbl
+            """).fetchall()
+            all_years = sorted(set(
+                [r['lbl'] for r in in_rows] + [r['lbl'] for r in out_rows]
+            ))
+            inflows  = {r['lbl']: float(r['v']) for r in in_rows}
+            outflows = {r['lbl']: float(r['v']) for r in out_rows}
+            return jsonify({
+                'labels':   all_years,
+                'inflows':  [inflows.get(y, 0)  for y in all_years],
+                'outflows': [outflows.get(y, 0) for y in all_years],
+            })
+
+        # Single year — group by month
+        ywl, ypl = _year_where(year, 'entry_date', 'l')
+        in_rows = conn.execute(f"""
+            SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo, SUM({_AMT_RAW}) AS v
             FROM ledger l
             LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
-            WHERE substr(l.entry_date,1,4)=? AND l.is_deleted=0
-              AND l.amount < 0
+            WHERE {ywl} AND l.is_deleted=0 AND {_AMT_RAW} > 0
               AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
             GROUP BY mo
-        """, [str(year)]).fetchall()
+        """, ypl).fetchall()
+        out_rows = conn.execute(f"""
+            SELECT CAST(substr(l.entry_date,6,2) AS INTEGER) AS mo, SUM(ABS({_AMT})) AS v
+            FROM ledger l
+            LEFT JOIN work_categories wc ON LOWER(l.category)=LOWER(wc.category_name)
+            WHERE {ywl} AND l.is_deleted=0
+              AND {_AMT} < 0
+              AND (wc.is_transfer IS NULL OR wc.is_transfer=0)
+            GROUP BY mo
+        """, ypl).fetchall()
 
         inflows  = {r['mo']: float(r['v']) for r in in_rows}
         outflows = {r['mo']: float(r['v']) for r in out_rows}
@@ -1003,13 +1205,13 @@ def report_income_statement():
                         "'Contribution','Distribution','Credit','Previous','Memo','KB','WRITE OFF'")
 
         def _qsum(q_months, extra_where='', params_extra=None):
-            """Sum amounts for a list of months (1-based)."""
+            """Sum signed amounts for a list of months (1-based)."""
             if not q_months:
                 return 0.0
             placeholders = ','.join('?' * len(q_months))
             p = [str(year)] + q_months + (params_extra or [])
             row = conn.execute(f"""
-                SELECT COALESCE(SUM(amount), 0)
+                SELECT COALESCE(SUM({_AMT_RAW}), 0)
                 FROM ledger
                 WHERE substr(entry_date,1,4)=?
                   AND CAST(substr(entry_date,6,2) AS INTEGER) IN ({placeholders})
@@ -1023,12 +1225,12 @@ def report_income_statement():
 
         # ── Revenue ──────────────────────────────────────────
         def rev_q(months):
-            return _qsum(months, f"AND category IN ({INCOME_CATS}) AND amount > 0")
+            return _qsum(months, f"AND category IN ({INCOME_CATS}) AND {_AMT_RAW} > 0")
         def rev_yr():
             r = conn.execute(f"""
-                SELECT COALESCE(SUM(amount),0) FROM ledger
+                SELECT COALESCE(SUM({_AMT_RAW}),0) FROM ledger
                 WHERE substr(entry_date,1,4)=? AND is_deleted=0
-                  AND category IN ({INCOME_CATS}) AND amount > 0
+                  AND category IN ({INCOME_CATS}) AND {_AMT_RAW} > 0
             """, [str(year)]).fetchone()
             return float(r[0]) if r else 0.0
 
@@ -1037,14 +1239,24 @@ def report_income_statement():
 
         # ── COGS ─────────────────────────────────────────────
         def cogs_q(months):
-            return _qsum(months,
-                "AND amount > 0 AND is_cogs=1",
-            )
+            if not months:
+                return 0.0
+            placeholders = ','.join('?' * len(months))
+            p = [str(year)] + months
+            row = conn.execute(f"""
+                SELECT COALESCE(SUM(ABS({_AMT_RAW})), 0)
+                FROM ledger
+                WHERE substr(entry_date,1,4)=?
+                  AND CAST(substr(entry_date,6,2) AS INTEGER) IN ({placeholders})
+                  AND is_deleted=0
+                  AND {_AMT_RAW} < 0 AND is_cogs=1
+            """, p).fetchone()
+            return float(row[0]) if row else 0.0
         def cogs_yr():
-            r = conn.execute("""
-                SELECT COALESCE(SUM(amount),0) FROM ledger
+            r = conn.execute(f"""
+                SELECT COALESCE(SUM(ABS({_AMT_RAW})),0) FROM ledger
                 WHERE substr(entry_date,1,4)=? AND is_deleted=0
-                  AND amount > 0 AND is_cogs=1
+                  AND {_AMT_RAW} < 0 AND is_cogs=1
             """, [str(year)]).fetchone()
             return float(r[0]) if r else 0.0
 
@@ -1062,13 +1274,13 @@ def report_income_statement():
         ])
 
         # Load ALL non-COGS, non-income expense amounts bucketed by label
-        opex_rows_raw = conn.execute("""
+        opex_rows_raw = conn.execute(f"""
             SELECT category,
                    CAST(substr(entry_date,6,2) AS INTEGER) AS mo,
-                   SUM(amount) AS total
+                   SUM(ABS({_AMT_RAW})) AS total
             FROM ledger
             WHERE substr(entry_date,1,4)=? AND is_deleted=0
-              AND amount > 0 AND is_cogs=0
+              AND {_AMT_RAW} < 0 AND is_cogs=0
             GROUP BY category, mo ORDER BY mo
         """, [str(year)]).fetchall()
 
@@ -1137,9 +1349,9 @@ def report_income_statement():
             if not cat_list: return 0.0
             ph = ','.join('?'*len(cat_list))
             r = conn.execute(f"""
-                SELECT COALESCE(SUM(amount),0) FROM ledger
+                SELECT COALESCE(SUM(ABS({_AMT_RAW})),0) FROM ledger
                 WHERE substr(entry_date,1,4)=? AND is_deleted=0
-                  AND amount > 0 AND category IN ({ph})
+                  AND {_AMT_RAW} < 0 AND category IN ({ph})
             """, [str(year)] + cat_list).fetchone()
             return float(r[0]) if r else 0.0
 

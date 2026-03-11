@@ -203,11 +203,36 @@ async function patchJobStatus(jobId, newStatus, btn) {
       </table>
     </div>
 
-    {% if pages > 1 %}
-    <div class="flex gap-8" style="padding:12px;justify-content:center">
-      {% if page > 1 %}<a href="?page={{ page-1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">← Prev</a>{% endif %}
-      <span class="text-dim" style="align-self:center">Page {{ page }} of {{ pages }}</span>
-      {% if page < pages %}<a href="?page={{ page+1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">Next →</a>{% endif %}
+    {% if pages >= 1 %}
+    <div class="flex gap-8" style="padding:8px 14px;justify-content:center;align-items:center;border-top:1px solid var(--border);flex-wrap:wrap">
+      {%- set ns = namespace(parts=[]) -%}
+      {%- for k, v in request.args.items() -%}
+        {%- if k != 'page' -%}{%- set ns.parts = ns.parts + [k+'='+v] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set qs_np = ns.parts|join('&') -%}
+      {% if page > 1 %}
+        <a href="?page=1&{{ qs_np }}" class="btn btn-outline btn-sm" title="First page">«</a>
+        <a href="?page={{ page-1 }}&{{ qs_np }}" class="btn btn-outline btn-sm">← Prev</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">«</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">← Prev</span>
+      {% endif %}
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)">
+        Page
+        <input type="number" id="jobs-pg-jump" min="1" max="{{ pages }}" value="{{ page }}"
+               style="width:48px;text-align:center;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:11px"
+               onkeydown="if(event.key==='Enter'){var p=Math.max(1,Math.min({{ pages }},parseInt(this.value)||1));window.location='?page='+p+'&{{ qs_np }}';}">
+        / {{ pages }}
+        <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:10px"
+                onclick="var p=Math.max(1,Math.min({{ pages }},parseInt(document.getElementById('jobs-pg-jump').value)||1));window.location='?page='+p+'&{{ qs_np }}';">Go</button>
+      </span>
+      {% if page < pages %}
+        <a href="?page={{ page+1 }}&{{ qs_np }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ pages }}&{{ qs_np }}" class="btn btn-outline btn-sm" title="Last page">»</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">Next →</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">»</span>
+      {% endif %}
     </div>
     {% endif %}
 

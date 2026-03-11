@@ -179,8 +179,13 @@ LEDGER_COLUMN_MAP = {
     'Vendor': 'vendor',
     'COGS': 'is_cogs',
     'Amount': 'amount',
+    'Income': 'income',
+    'Expense': 'expense',
     'Receipt': 'receipt_filename',
     'Notes': 'notes',
+    'Memo': 'memo',
+    'Nickname': 'nickname',
+    'Type of Payment': 'type_of_payment',
 }
 
 TIMESHEET_COLUMN_MAP = {
@@ -198,6 +203,14 @@ TIMESHEET_COLUMN_MAP = {
     'Expenses': 'expenses',
     'Description': 'description',
     'Notes': 'notes',
+    'Billable': 'billable',
+    'Bill Type': 'billable',
+    'Invoice #': 'invoice_number',
+    'Invoice Number': 'invoice_number',
+    'Invoice': 'invoice_number',
+    'Person': 'person_label',
+    'Category': 'work_type',
+    'Work Type': 'work_type',
 }
 
 CLIENTS_COLUMN_MAP = {
@@ -254,16 +267,60 @@ def detect_sheet_mapping(sheet_name: str, headers: list) -> str:
 
 
 def map_row_to_ledger(raw: dict) -> dict:
-    """Map a raw row dict to ledger table fields."""
+    """Map a raw row dict to ledger table fields.
+
+    Handles three import shapes:
+      1. Separate Income + Expense columns  (preferred — preserves refund distinction)
+      2. Single Amount column               (negative = expense, positive = income)
+      3. Mixed (Amount + Income/Expense)    (Income/Expense take priority)
+
+    Refund/return rule:
+      A negative Expense value means money came BACK (contra-expense / refund).
+      It should remain in the expense column as a negative number, NOT be promoted to income.
+      amount (net) = income - expense, so a refund where expense=-50 → amount=+50.
+    """
     mapped = {}
     for src, dst in LEDGER_COLUMN_MAP.items():
         if src in raw:
             mapped[dst] = raw[src]
-    # Normalize fields
+    # Normalize date
     if 'entry_date' in mapped:
         mapped['entry_date'] = parse_flexible_date(mapped['entry_date'])
-    if 'amount' in mapped:
+    # Parse income/expense as signed floats if present
+    has_income  = 'income'  in mapped and mapped['income']  not in (None, '', '0', 0)
+    has_expense = 'expense' in mapped and mapped['expense'] not in (None, '', '0', 0)
+    if has_income:
+        try:
+            mapped['income'] = parse_amount(mapped['income'])  # sign preserved
+        except Exception:
+            mapped['income'] = None
+            has_income = False
+    else:
+        mapped['income'] = None
+    if has_expense:
+        try:
+            mapped['expense'] = parse_amount(mapped['expense'])  # sign preserved
+        except Exception:
+            mapped['expense'] = None
+            has_expense = False
+    else:
+        mapped['expense'] = None
+
+    if has_income or has_expense:
+        # Derive canonical amount from income/expense (net value for legacy queries)
+        inc = mapped['income'] or 0
+        exp = mapped['expense'] or 0
+        mapped['amount'] = inc - exp  # e.g. income=0, expense=-50 → amount=+50 (refund)
+    elif 'amount' in mapped:
         mapped['amount'] = parse_amount(mapped['amount'])
+        # Derive income/expense from single amount column
+        amt = mapped['amount']
+        if amt > 0:
+            mapped['income']  = amt
+            mapped['expense'] = None
+        elif amt < 0:
+            mapped['income']  = None
+            mapped['expense'] = amt  # negative = refund/return in expense col
     if 'is_cogs' in mapped:
         val = str(mapped['is_cogs']).lower()
         mapped['is_cogs'] = 1 if val in ('yes', 'true', '1', 'x') else 0
@@ -385,23 +442,40 @@ def import_clients(rows: list, conn) -> dict:
 def import_ledger(rows: list, conn) -> dict:
     imported, skipped = 0, 0
     for row in rows:
-        if not row.get('entry_date') or not row.get('amount'):
+        # Require at least a date and some amount value
+        has_amount = (
+            row.get('amount') is not None or
+            row.get('income') is not None or
+            row.get('expense') is not None
+        )
+        if not row.get('entry_date') or not has_amount:
             skipped += 1
             continue
         try:
+            amount  = row.get('amount') or 0
+            income  = row.get('income')
+            expense = row.get('expense')
+            # If income/expense not set but amount is, derive them
+            if income is None and expense is None:
+                if amount > 0:
+                    income = amount
+                elif amount < 0:
+                    expense = amount  # negative = refund stored in expense
             conn.execute("""
                 INSERT INTO ledger
                 (entry_date, job_code, job_number, invoice_number, status,
-                 category, description, vendor, is_cogs, amount,
-                 receipt_filename, notes)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                 category, description, vendor, is_cogs, amount, income, expense,
+                 receipt_filename, notes, memo, nickname, type_of_payment)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, [
                 row['entry_date'], row.get('job_code', ''),
                 row.get('job_number', ''), row.get('invoice_number', ''),
                 row.get('status', 'Pending'), row.get('category', ''),
                 row.get('description', ''), row.get('vendor', ''),
-                row.get('is_cogs', 0), row['amount'],
-                row.get('receipt_filename', ''), row.get('notes', '')
+                row.get('is_cogs', 0), amount, income, expense,
+                row.get('receipt_filename', ''), row.get('notes', ''),
+                row.get('memo', ''), row.get('nickname', ''),
+                row.get('type_of_payment', ''),
             ])
             imported += 1
         except Exception:

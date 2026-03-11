@@ -150,6 +150,9 @@ def cert_verify(cert_id):
                 "UPDATE certificates SET cert_verified=?, updated_at=datetime('now') WHERE id=?",
                 [1 if verified else 0, cert_id]
             )
+            log_action(wconn, 'certificates', cert_id, 'UPDATE',
+                       new_data={'cert_verified': 1 if verified else 0},
+                       user_label=f'Verified cert #{cert_id}: {verified}')
         return jsonify({
             'success': True,
             'verified': verified,
@@ -222,7 +225,15 @@ def certs():
             FROM certificates c
             LEFT JOIN contractors con ON c.contractor_id = con.id
             WHERE {' AND '.join(where)}
-            ORDER BY c.end_date ASC NULLS LAST, con.company_name
+            ORDER BY
+              CASE
+                WHEN c.end_date IS NULL OR c.end_date = '' THEN 3
+                WHEN c.end_date > date('now', '+60 days')  THEN 0
+                WHEN c.end_date >= date('now')             THEN 1
+                ELSE 2
+              END ASC,
+              c.end_date ASC,
+              con.company_name
         """, params).fetchall()
 
         certs_list = []
@@ -381,6 +392,9 @@ def cert_delete(cert_id):
         if not cert:
             return jsonify({'error': 'Not found'}), 404
         soft_delete(conn, 'certificates', cert_id)
+        log_action(conn, 'certificates', cert_id, 'DELETE',
+                   old_data=dict(cert),
+                   user_label=f'Deleted cert #{cert_id}: {cert["cert_type"]} {cert.get("contractor_name","")}')
     return jsonify({'success': True})
 
 

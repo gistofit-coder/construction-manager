@@ -124,56 +124,76 @@ def invoices():
         if status_filter:
             where.append("i.status=?"); params.append(status_filter)
         if client_filter:
-            where.append("i.client_id=?"); params.append(client_filter)
+            # client_id is NULL on all existing invoices; match via job_code = customer_id
+            where.append("i.job_code IN (SELECT customer_id FROM clients WHERE full_name=? AND is_deleted=0)")
+            params.append(client_filter)
         if job_filter:
             where.append("i.job_code=?"); params.append(job_filter)
         if year_filter:
-            where.append("substr(i.invoice_date,1,4)=?"); params.append(year_filter)
+            # Dates stored as MM/DD/YY (8 chars) — year is last 2 digits
+            # Filter: '20'||substr(invoice_date,7,2) = year_filter
+            where.append("('20'||substr(i.invoice_date,7,2))=?"); params.append(year_filter)
         if q:
-            where.append("(i.invoice_number LIKE ? OR c.full_name LIKE ? OR i.description_of_work LIKE ? OR i.job_code LIKE ?)")
+            where.append("""(i.invoice_number LIKE ?
+                OR COALESCE(c1.full_name, c2.full_name) LIKE ?
+                OR i.description_of_work LIKE ?
+                OR i.job_code LIKE ?)""")
             params += [f"%{q}%"]*4
 
         where_sql = " AND ".join(where)
 
         total_count = conn.execute(
-            f"SELECT COUNT(*) FROM invoices i LEFT JOIN clients c ON i.client_id=c.id WHERE {where_sql}",
+            f"""SELECT COUNT(*) FROM invoices i
+               LEFT JOIN clients c1 ON i.client_id = c1.id
+               LEFT JOIN clients c2 ON i.job_code  = c2.customer_id
+               WHERE {where_sql}""",
             params
         ).fetchone()[0]
 
         rows = conn.execute(f"""
             SELECT i.*,
-                   c.full_name AS client_name,
-                   c.customer_id,
+                   COALESCE(c1.full_name, c2.full_name) AS client_name,
+                   COALESCE(c1.customer_id, c2.customer_id) AS customer_id,
                    j.description AS job_desc
             FROM invoices i
-            LEFT JOIN clients c ON i.client_id = c.id
-            LEFT JOIN jobs    j ON i.job_code  = j.job_code
+            LEFT JOIN clients c1 ON i.client_id    = c1.id
+            LEFT JOIN clients c2 ON i.job_code     = c2.customer_id
+            LEFT JOIN jobs    j  ON i.job_code     = j.job_code
             WHERE {where_sql}
             ORDER BY i.invoice_number DESC
             LIMIT ? OFFSET ?
         """, params + [per_page, (page-1)*per_page]).fetchall()
 
-        # ── Summary tiles ─────────────────────────────────────
-        summary = conn.execute("""
+        # ── Summary tiles — filter-aware (matches current view) ────
+        summary = conn.execute(f"""
             SELECT
-                COALESCE(SUM(CASE WHEN status='Paid' THEN amount ELSE 0 END),0)       AS paid_total,
-                COALESCE(SUM(CASE WHEN status!='Paid' THEN balance_due ELSE 0 END),0) AS outstanding,
-                COALESCE(SUM(CASE WHEN status='Overdue' THEN balance_due ELSE 0 END),0) AS overdue,
-                COUNT(CASE WHEN status NOT IN ('Paid') THEN 1 END)                    AS open_count,
-                COUNT(CASE WHEN status='Overdue' THEN 1 END)                          AS overdue_count
-            FROM invoices WHERE is_deleted=0
-        """).fetchone()
+                COALESCE(SUM(CASE WHEN i.status='Paid' THEN i.amount ELSE 0 END),0)         AS paid_total,
+                COALESCE(SUM(CASE WHEN i.status!='Paid' THEN i.balance_due ELSE 0 END),0)   AS outstanding,
+                COALESCE(SUM(CASE WHEN i.status='Overdue' THEN i.balance_due ELSE 0 END),0) AS overdue,
+                COUNT(CASE WHEN i.status NOT IN ('Paid') THEN 1 END)                        AS open_count,
+                COUNT(CASE WHEN i.status='Overdue' THEN 1 END)                              AS overdue_count
+            FROM invoices i
+            LEFT JOIN clients c1 ON i.client_id = c1.id
+            LEFT JOIN clients c2 ON i.job_code  = c2.customer_id
+            WHERE {where_sql}
+        """, params).fetchone()
 
         # ── Dropdown data ─────────────────────────────────────
-        clients = conn.execute(
-            "SELECT id, full_name, customer_id FROM clients WHERE is_deleted=0 ORDER BY full_name"
-        ).fetchall()
+        clients = conn.execute("""
+            SELECT DISTINCT c.full_name
+            FROM invoices i
+            JOIN clients c ON i.job_code = c.customer_id
+            WHERE i.is_deleted=0 AND c.is_deleted=0
+            ORDER BY c.full_name
+        """).fetchall()
         jobs = conn.execute(
             "SELECT job_code FROM jobs WHERE is_deleted=0 ORDER BY job_code"
         ).fetchall()
         years = conn.execute("""
-            SELECT DISTINCT substr(invoice_date,1,4) AS yr FROM invoices
-            WHERE is_deleted=0 ORDER BY yr DESC
+            SELECT DISTINCT ('20'||substr(invoice_date,7,2)) AS yr
+            FROM invoices
+            WHERE is_deleted=0 AND invoice_date != '' AND length(invoice_date)>=8
+            ORDER BY yr DESC
         """).fetchall()
 
         # Add aging info per row
@@ -360,12 +380,18 @@ def invoice_detail(inv_id):
     conn   = get_connection()
     try:
         invoice = conn.execute("""
-            SELECT i.*, c.full_name AS client_name, c.customer_id,
-                   c.address, c.city_state_zip, c.phone1, c.email1,
+            SELECT i.*,
+                   COALESCE(c1.full_name, c2.full_name) AS client_name,
+                   COALESCE(c1.customer_id, c2.customer_id) AS customer_id,
+                   COALESCE(c1.address, c2.address) AS address,
+                   COALESCE(c1.city_state_zip, c2.city_state_zip) AS city_state_zip,
+                   COALESCE(c1.phone1, c2.phone1) AS phone1,
+                   COALESCE(c1.email1, c2.email1) AS email1,
                    j.description AS job_desc
             FROM invoices i
-            LEFT JOIN clients c ON i.client_id = c.id
-            LEFT JOIN jobs    j ON i.job_code  = j.job_code
+            LEFT JOIN clients c1 ON i.client_id = c1.id
+            LEFT JOIN clients c2 ON i.job_code  = c2.customer_id
+            LEFT JOIN jobs    j  ON i.job_code  = j.job_code
             WHERE i.id=? AND i.is_deleted=0
         """, [inv_id]).fetchone()
         if not invoice:
@@ -486,7 +512,11 @@ def invoice_payment(inv_id):
 @phase5.route('/invoices/<int:inv_id>/delete', methods=['POST'])
 def invoice_delete(inv_id):
     with db() as conn:
+        old_row = conn.execute("SELECT * FROM invoices WHERE id=?", [inv_id]).fetchone()
         soft_delete(conn, 'invoices', inv_id)
+        log_action(conn, 'invoices', inv_id, 'DELETE',
+                   old_data=dict(old_row) if old_row else {},
+                   user_label=f'Deleted invoice #{inv_id}')
     if request.is_json:
         return jsonify({'success': True})
     flash('Invoice deleted (Undo to restore).', 'success')
@@ -499,16 +529,26 @@ def invoice_delete(inv_id):
 
 @phase5.route('/invoices/<int:inv_id>/pdf')
 def invoice_pdf(inv_id):
-    """Generate a print-ready invoice PDF via WeasyPrint; fall back to HTML."""
+    """Generate a print-ready invoice PDF via WeasyPrint; fall back to HTML.
+    ?mode=summary  → category totals only (customer-friendly, no line items)
+    ?mode=detail   → full timesheet breakdown (default)
+    """
+    pdf_mode = request.args.get('mode', 'detail')
     conn = get_connection()
     try:
         invoice = conn.execute("""
-            SELECT i.*, c.full_name AS client_name, c.customer_id,
-                   c.address, c.city_state_zip, c.phone1, c.email1,
+            SELECT i.*,
+                   COALESCE(c1.full_name, c2.full_name) AS client_name,
+                   COALESCE(c1.customer_id, c2.customer_id) AS customer_id,
+                   COALESCE(c1.address, c2.address) AS address,
+                   COALESCE(c1.city_state_zip, c2.city_state_zip) AS city_state_zip,
+                   COALESCE(c1.phone1, c2.phone1) AS phone1,
+                   COALESCE(c1.email1, c2.email1) AS email1,
                    j.description AS job_desc
             FROM invoices i
-            LEFT JOIN clients c ON i.client_id = c.id
-            LEFT JOIN jobs    j ON i.job_code  = j.job_code
+            LEFT JOIN clients c1 ON i.client_id = c1.id
+            LEFT JOIN clients c2 ON i.job_code  = c2.customer_id
+            LEFT JOIN jobs    j  ON i.job_code  = j.job_code
             WHERE i.id=? AND i.is_deleted=0
         """, [inv_id]).fetchone()
         if not invoice:
@@ -533,6 +573,7 @@ def invoice_pdf(inv_id):
             config=config, invoice=inv,
             ts_rows=[dict(r) for r in ts_rows],
             today=today,
+            pdf_mode=pdf_mode,
         )
 
         # Try WeasyPrint
@@ -568,7 +609,8 @@ def api_aging():
                    i.amount, i.balance_due, i.status,
                    c.full_name AS client_name
             FROM invoices i
-            LEFT JOIN clients c ON i.client_id = c.id
+            LEFT JOIN clients c1 ON i.client_id = c1.id
+            LEFT JOIN clients c2 ON i.job_code  = c2.customer_id
             WHERE i.is_deleted=0 AND i.status != 'Paid'
             ORDER BY i.due_date
         """).fetchall()
@@ -628,14 +670,20 @@ def invoices_export():
         if status_filter:
             where.append("i.status=?"); params.append(status_filter)
         if client_filter:
-            where.append("i.client_id=?"); params.append(client_filter)
+            # client_id is NULL on all existing invoices; match via job_code = customer_id
+            where.append("i.job_code IN (SELECT customer_id FROM clients WHERE full_name=? AND is_deleted=0)")
+            params.append(client_filter)
         if year_filter:
-            where.append("substr(i.invoice_date,1,4)=?"); params.append(year_filter)
+            # Dates stored as MM/DD/YY (8 chars) — year is last 2 digits
+            # Filter: '20'||substr(invoice_date,7,2) = year_filter
+            where.append("('20'||substr(i.invoice_date,7,2))=?"); params.append(year_filter)
 
         rows = conn.execute(f"""
-            SELECT i.*, c.full_name AS client_name
+            SELECT i.*,
+                   COALESCE(c1.full_name, c2.full_name) AS client_name
             FROM invoices i
-            LEFT JOIN clients c ON i.client_id=c.id
+            LEFT JOIN clients c1 ON i.client_id = c1.id
+            LEFT JOIN clients c2 ON i.job_code  = c2.customer_id
             WHERE {' AND '.join(where)}
             ORDER BY i.invoice_number DESC
         """, params).fetchall()

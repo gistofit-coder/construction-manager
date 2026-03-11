@@ -17,6 +17,13 @@
 .dup-tag.clean     { background:#dcfce7; color:#166534; }
 .stats-pills { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
 .stat-pill   { padding:4px 12px; border-radius:16px; font-size:12px; font-weight:600; }
+.sticky-import-bar {
+  position: sticky; top: 0; z-index: 100;
+  background: var(--card-bg); border-bottom: 2px solid var(--accent);
+  padding: 10px 16px; margin-bottom: 14px;
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  box-shadow: 0 2px 12px rgba(0,0,0,.3);
+}
 </style>
 
 <div class="section-header">
@@ -66,13 +73,19 @@
 </div>
 {% endif %}
 
-<!-- Bulk toggle bar -->
-<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-  <button class="btn btn-outline btn-sm" onclick="toggleAll(true)">☑ Select All</button>
-  <button class="btn btn-outline btn-sm" onclick="toggleAll(false)">☐ Deselect All</button>
-  <button class="btn btn-outline btn-sm" onclick="toggleDupStatus('exact',true)">Skip all exact dups</button>
-  <button class="btn btn-outline btn-sm" onclick="toggleDupStatus('near',true)">Skip all near dups</button>
-  <span id="count-label" style="font-size:12px;color:var(--text-dim);margin-left:8px"></span>
+<!-- Sticky action bar (visible during scroll) -->
+<div class="sticky-import-bar">
+  <button type="button" class="btn btn-primary" onclick="prepareSubmit(); document.getElementById('import-form').submit();" id="submit-btn-top">
+    ✅ Import Selected Rows
+  </button>
+  <a href="/ledger" class="btn btn-outline">✕ Cancel</a>
+  <span id="submit-label-top" style="font-size:12px;color:var(--text-dim)"></span>
+  <span style="flex:1"></span>
+  <button class="btn btn-outline btn-sm" onclick="toggleAll(true)">☑ All</button>
+  <button class="btn btn-outline btn-sm" onclick="toggleAll(false)">☐ None</button>
+  <button class="btn btn-outline btn-sm" onclick="toggleDupStatus('exact',true)">Skip exact</button>
+  <button class="btn btn-outline btn-sm" onclick="toggleDupStatus('near',true)">Skip near</button>
+  <span id="count-label" style="font-size:12px;color:var(--text-dim)"></span>
 </div>
 
 <form method="POST" action="/ledger/import" id="import-form">
@@ -165,11 +178,17 @@ function updateSkipList() {
   const checked   = document.querySelectorAll('.imp-cb:checked').length;
   const total     = document.querySelectorAll('.imp-cb').length;
   const skipped   = total - checked;
-  document.getElementById('count-label').textContent =
-    `${checked} of ${total} rows selected (${skipped} will be skipped)`;
-  document.getElementById('submit-label').textContent =
-    `Will import ${checked} entr${checked===1?'y':'ies'}`;
-  document.getElementById('submit-btn').disabled = checked === 0;
+  const msg = `${checked} of ${total} rows selected (${skipped} will be skipped)`;
+  const lblImport = `Will import ${checked} entr${checked===1?'y':'ies'}`;
+  document.getElementById('count-label').textContent = msg;
+  const sl = document.getElementById('submit-label');
+  if (sl) sl.textContent = lblImport;
+  const slt = document.getElementById('submit-label-top');
+  if (slt) slt.textContent = lblImport;
+  const btn = document.getElementById('submit-btn');
+  if (btn) btn.disabled = checked === 0;
+  const btnTop = document.getElementById('submit-btn-top');
+  if (btnTop) btnTop.disabled = checked === 0;
 }
 
 function toggleAll(checked) {

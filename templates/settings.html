@@ -1,6 +1,7 @@
+{# settings.html  v1.0.1 – 2026-03-11 #}
 {% extends "base.html" %}
 {% block title %}Settings — {{ config.company_name or 'Construction Manager' }}{% endblock %}
-{% block topbar_title %}Settings{% endblock %}
+{% block topbar_title %}⚙️ Settings{% endblock %}
 {% block breadcrumb %}<a href="/">Home</a> / Settings{% endblock %}
 
 {% block content %}
@@ -128,39 +129,110 @@
                    value="{{ config.backup_keep_count or 30 }}" style="width:80px">
             <div class="field-hint">Older auto-backups are deleted automatically</div>
           </div>
+
+          <div style="font-size:11px;color:var(--accent);min-height:16px;margin-top:6px" id="company-save-status"></div>
+      </form><!-- company form auto-saves -->
+    </div><!-- end card-body -->
+  </div><!-- end main company card -->
+
+  <!-- App Preferences -->
+  <div class="card" style="margin-top:14px">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+      <span class="card-title">⚙️ App Preferences</span>
+
+    </div>
+    <div class="card-body">
+      <div style="font-size:11px;color:var(--accent);min-height:16px;margin-bottom:8px" id="pref-save-status"></div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Program Time Clock <span class="tip">Track time spent using this app</span></label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="pref-time-tracker"
+                   {% if config.time_tracker_enabled %}checked{% endif %}
+                   onchange="savePref('time_tracker_enabled', this.checked ? 1 : 0)">
+            <span class="toggle-slider"></span>
+          </label>
+          <div class="field-hint">Logs session start/end times. View log at <a href="/timeclock">Time Clock Log</a></div>
+        </div>
+        <div class="form-group">
+          <label>Exit Confirmation <span class="tip">Prompt before closing the app</span></label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="pref-confirm-exit"
+                   {% if config.confirm_on_exit %}checked{% endif %}
+                   onchange="savePref('confirm_on_exit', this.checked ? 1 : 0)">
+            <span class="toggle-slider"></span>
+          </label>
+          <div class="field-hint">Shows a confirmation dialog before shutting down</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Default Overhead & Profit Rates -->
+  <div class="card" style="margin-top:14px">
+    <div class="card-header"><span class="card-title">📐 Default Overhead &amp; Profit Rates</span></div>
+    <div class="card-body">
+      <p class="text-dim" style="font-size:12px;margin-bottom:12px">Used as starting values when creating new estimates or projects. Editable per-project at any time.</p>
+      <div style="font-size:11px;color:var(--accent);min-height:16px;margin-bottom:6px" id="oph-save-status"></div>
+      <form action="/settings/company" method="POST" id="oph-form">
+        <div class="form-grid form-grid-3">
           <div class="form-group">
-            <label>Continuous Scroll</label>
-            <label class="toggle-switch">
-              <input type="checkbox" name="continuous_scroll" value="1"
-                     {% if config.continuous_scroll %}checked{% endif %}
-                     onchange="this.form.querySelector('[name=continuous_scroll_hidden]').value = this.checked ? 1 : 0">
-              <span class="toggle-slider"></span>
-            </label>
-            <div class="field-hint">Infinite scroll instead of pagination in Ledger, Invoices, Receipts</div>
-            <input type="hidden" name="continuous_scroll" value="{{ config.continuous_scroll or 0 }}">
+            <label>Overhead %</label>
+            <input type="number" step="0.1" min="0" max="100" name="default_overhead_pct"
+                   value="{{ config.default_overhead_pct or 5.0 }}" onchange="autoSaveForm('oph-form','oph-save-status')">
+            <div class="field-hint">Default: 5%</div>
           </div>
           <div class="form-group">
-            <label>Program Time Clock
-              <span class="tip">Track time spent using this app (accounting, admin, etc.)</span>
-            </label>
-            <label class="toggle-switch">
-              <input type="checkbox" name="time_tracker_enabled" value="1"
-                     {% if config.time_tracker_enabled %}checked{% endif %}
-                     onchange="this.form.querySelector('[name=time_tracker_hidden]').value = this.checked ? 1 : 0">
-              <span class="toggle-slider"></span>
-            </label>
-            <div class="field-hint">Logs session start/end times. View log at <a href="/timeclock">Time Clock Log</a></div>
-            <input type="hidden" name="time_tracker_enabled" id="time_tracker_hidden" value="{{ config.time_tracker_enabled or 0 }}">
-        </div>
-
-        <div class="mt-12 flex gap-8">
-          <button type="submit" class="btn btn-primary">💾 Save Company Settings</button>
+            <label>Insurance %</label>
+            <input type="number" step="0.1" min="0" max="100" name="default_insurance_pct"
+                   value="{{ config.default_insurance_pct or 1.0 }}" onchange="autoSaveForm('oph-form','oph-save-status')">
+            <div class="field-hint">Default: 1%</div>
+          </div>
+          <div class="form-group">
+            <label>Owner Wages %</label>
+            <input type="number" step="0.1" min="0" max="100" name="default_owner_wages_pct"
+                   value="{{ config.default_owner_wages_pct or 11.0 }}" onchange="autoSaveForm('oph-form','oph-save-status')">
+            <div class="field-hint">Default: 11%</div>
+          </div>
+          <div class="form-group">
+            <label>Profit %</label>
+            <input type="number" step="0.1" min="0" max="100" name="default_profit_pct"
+                   value="{{ config.default_profit_pct or 20.0 }}" onchange="autoSaveForm('oph-form','oph-save-status')">
+            <div class="field-hint">Default: 20%</div>
+          </div>
+          <div class="form-group">
+            <label>Markup (multiplier)</label>
+            <input type="number" step="0.01" min="0" max="10" name="default_markup_pct"
+                   value="{{ config.default_markup_pct or 0.20 }}" onchange="autoSaveForm('oph-form','oph-save-status')">
+            <div class="field-hint">e.g. 0.20 = 20% markup</div>
+          </div>
         </div>
       </form>
     </div>
   </div>
-</div>
 
+  <!-- Company Logo -->
+  <div class="card" style="margin-top:14px">
+    <div class="card-header"><span class="card-title">🖼 Company Logo</span></div>
+    <div class="card-body">
+      {% if config.company_logo_path %}
+      <div style="margin-bottom:12px">
+        <img src="/files/logo" alt="Current logo"
+             style="max-height:80px;max-width:200px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:4px;background:var(--input-bg)">
+        <div style="font-size:11px;color:var(--text-dim);margin-top:4px">Current logo</div>
+      </div>
+      {% endif %}
+      <form action="/settings/logo" method="POST" enctype="multipart/form-data"
+            style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <input type="file" name="logo_file" accept=".png,.jpg,.jpeg,.gif,.webp,.svg"
+               style="font-size:12px;color:var(--text)">
+        <button type="submit" class="btn btn-primary btn-sm">Upload Logo</button>
+        <span class="text-dim" style="font-size:11px">PNG, JPG, SVG · Shown in sidebar</span>
+      </form>
+    </div>
+  </div>
+
+</div><!-- end pane-company -->
 <!-- TAXES TAB -->
 <div class="tab-pane" id="pane-taxes">
   <div class="card">
@@ -168,7 +240,7 @@
       <span class="card-title">📊 Payroll Tax Rates</span>
     </div>
     <div class="card-body">
-      <form action="/settings/company" method="POST">
+      <form action="/settings/company" method="POST" id="company-form">
         <div class="form-grid form-grid-3">
           <div class="form-group">
             <label>FICA Employee Rate</label>
@@ -282,10 +354,24 @@
               <td class="mono">•••• {{ acct.last_four or '—' }}</td>
               <td class="amount">${{ '{:,.2f}'.format(acct.current_balance) }}</td>
               <td>
-                <button class="btn btn-outline btn-xs" data-acct='{{ acct | tojson }}'
+                <button class="btn btn-outline btn-xs"
+                        data-id="{{ acct.id }}"
+                        data-name="{{ acct.account_name | e }}"
+                        data-type="{{ acct.account_type | e }}"
+                        data-inst="{{ (acct.institution_name or '') | e }}"
+                        data-last4="{{ (acct.last_four or '') | e }}"
+                        data-bal="{{ acct.current_balance or 0 }}"
+                        data-notes="{{ (acct.notes or '') | e }}"
+                        data-folder="{{ (acct.statements_folder_path or '') | e }}"
                         onclick="editBankAcct(this)">Edit</button>
+                <button class="btn btn-warning btn-xs"
+                        data-acct-id="{{ acct.id }}"
+                        data-acct-name="{{ acct.account_name | e }}"
+                        onclick="clearAccountMatches(this)"
+                        style="margin-left:4px"
+                        title="Reset all match status for this account so you can re-run auto-match">↺ Clear Matches</button>
                 <button class="btn btn-danger btn-xs"
-                        onclick="if(confirm('Delete this account?')){document.getElementById('del-bank-{{ acct.id }}').submit()}" style="margin-left:4px">🗑</button>
+                        onclick="(async()=>{if(await appConfirmDanger('Delete this account? This cannot be undone.','Delete Account?','Delete','🗑'))document.getElementById('del-bank-{{ acct.id }}').submit()})()" style="margin-left:4px">🗑</button>
                 <form id="del-bank-{{ acct.id }}" method="POST" action="/settings/bank-account/{{ acct.id }}/delete" style="display:none"></form>
               </td>
             </tr>
@@ -350,12 +436,13 @@
       <div class="card-header">
         <span class="card-title">💾 Automatic Database Backup</span>
         <div class="card-actions">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
-            <input type="checkbox" id="auto-backup-toggle"
-                   {% if config.auto_backup_enabled != 0 %}checked{% endif %}
-                   onchange="saveAutoBackupToggle(this)">
-            Auto-backup on shutdown
-          </label>
+          <select id="auto-backup-mode"
+                  style="font-size:12px;padding:3px 6px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;"
+                  onchange="saveAutoBackupMode(this.value)">
+            <option value="startup"  {% if config.auto_backup_mode == 'startup'  %}selected{% endif %}>On Startup</option>
+            <option value="shutdown" {% if config.auto_backup_mode == 'shutdown' or not config.auto_backup_mode %}selected{% endif %}>On Shutdown</option>
+            <option value="never"    {% if config.auto_backup_mode == 'never'    %}selected{% endif %}>Manual Only</option>
+          </select>
         </div>
       </div>
       <div class="card-body">
@@ -364,9 +451,7 @@
           Configure folder and retention in Company Settings.
         </p>
         <div class="flex gap-8" style="margin-bottom:14px">
-          <form action="/settings/backup" method="POST">
-            <button type="submit" class="btn btn-primary">📦 Backup Now</button>
-          </form>
+          <button class="btn btn-primary" onclick="runManualBackup(this)">📦 Backup Now</button>
           <button class="btn btn-outline" onclick="loadBackupHistory()">📋 Past Backups</button>
         </div>
         <div id="backupHistoryPanel" style="display:none">
@@ -388,34 +473,39 @@
       </div>
     </div>
     <div class="card">
-      <div class="card-header"><span class="card-title">📜 Verify Cert Files</span></div>
+      <div class="card-header"><span class="card-title">📂 Scan COI PDFs</span></div>
       <div class="card-body">
         <p class="text-dim" style="margin-bottom:12px;font-size:12px">
-          Scans all certificate records with filenames and checks they exist in the Certs Folder.
-          Updates the ✅/⚠️ indicator in the Certs Tracker.
+          Scans the Certs Folder for PDFs named <code>CompanyName MM-DD-YY_MM-DD-YY.pdf</code>.
+          Matches each PDF to a contractor, reads dates from the filename, and creates or updates
+          COI records. Also verifies all existing cert records against files on disk.
+          Duplicate COIs (same contractor + same expiry date) are skipped automatically.
         </p>
-        <button class="btn btn-outline" onclick="verifyCerts(this)">🔍 Verify All Cert Files</button>
-        <div id="certVerifyResult" style="margin-top:8px;font-size:12px"></div>
+        <button class="btn btn-outline" onclick="scanCOIPdfs(this)">📂 Scan &amp; Verify COI PDFs</button>
+        <div id="coiScanResult" style="margin-top:8px;font-size:12px"></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-header"><span class="card-title">📥 Import from Workbook</span></div>
-      <div class="card-body">
-        <p class="text-dim" style="margin-bottom:12px;font-size:12px">
-          Migrate data from your existing LibreOffice/Excel workbook (.ODS or .XLSX).
-          Guided wizard with preview, validation, and error correction.
-        </p>
-        <a href="/settings/import" class="btn btn-primary">🧙 Launch Import Wizard</a>
-      </div>
-    </div>
+
     <div class="card">
       <div class="card-header"><span class="card-title">ℹ️ System Info</span></div>
       <div class="card-body">
         <table style="width:100%">
           <tr><td class="text-dim" style="padding:4px 0">Database</td><td class="mono text-bright">{{ db_name }}</td></tr>
-          <tr><td class="text-dim" style="padding:4px 0">App Version</td><td>Phase 1 — Foundation</td></tr>
-          <tr><td class="text-dim" style="padding:4px 0">Phase</td><td>1 of 10</td></tr>
+          <tr><td class="text-dim" style="padding:4px 0">App Version</td><td class="mono text-bright">v1.0.0</td></tr>
+          <tr><td class="text-dim" style="padding:4px 0">Build Date</td><td class="text-dim">2025-03-07</td></tr>
         </table>
+      </div>
+    </div>
+    <div class="card" style="border:1px solid var(--orange,#f59e0b)">
+      <div class="card-header" style="background:rgba(245,158,11,0.07)">
+        <span class="card-title">↺ Reset App Settings to Defaults</span>
+      </div>
+      <div class="card-body">
+        <p class="text-dim" style="font-size:12px;margin-bottom:12px">
+          Reset overhead rates, app preferences, backup settings, or ledger view settings back to factory defaults.
+          Company info and all financial data are never changed.
+        </p>
+        <button class="btn btn-warning" onclick="openModal('reset-defaults-modal')">↺ Choose &amp; Reset Defaults…</button>
       </div>
     </div>
   </div>
@@ -488,6 +578,12 @@
         <div class="form-group full">
           <label>Notes</label>
           <textarea name="notes" id="bank-acct-notes" rows="2"></textarea>
+        </div>
+        <div class="form-group full">
+          <label>📁 Statements Folder Path</label>
+          <input type="text" name="statements_folder_path" id="bank-acct-folder"
+                 placeholder="C:\Users\You\Documents\BankStatements\Checking">
+          <small class="text-dim" style="font-size:10px">Full path to folder containing PDF statements for this account. Used by the 📁 Statements button in Reconciliation.</small>
         </div>
         <div class="form-group full">
           <button type="submit" class="btn btn-primary">💾 Save Account</button>
@@ -577,7 +673,7 @@
   </div>
 
   <!-- Per-Table Management Card -->
-  <div class="card">
+  <div class="card" style="margin-bottom:14px">
     <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
       <span class="card-title">🗂 Table Data Management</span>
       <button class="btn btn-outline btn-sm" onclick="loadTableStats()">↺ Refresh Counts</button>
@@ -593,8 +689,121 @@
     </div>
   </div>
 
+  <!-- Purge Deleted Records Card -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between">
+      <span class="card-title">🗑 Purge Deleted Records</span>
+    </div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+        Permanently remove soft-deleted records from the database. This cannot be undone.
+        A backup will be created automatically before purging.
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="purge-buttons">
+        {% for tbl in ['ledger','clients','contractors','certificates','jobs','employees','invoices','bank_transactions'] %}
+        <button class="btn btn-danger btn-sm" onclick="purgeTable('{{ tbl }}')">
+          🗑 {{ tbl }}
+        </button>
+        {% endfor %}
+      </div>
+      <div id="purge-status" style="font-size:12px;margin-top:8px;min-height:16px"></div>
+    </div>
+  </div>
+
+  <!-- Empty CSV Templates Card -->
+  <div class="card">
+    <div class="card-header"><span class="card-title">📄 Empty CSV Import Templates</span></div>
+    <div class="card-body">
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+        Download a blank CSV with the correct headers for each table, ready to fill in and import.
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        {% for tbl in ['ledger','clients','contractors','certificates','jobs','employees','invoices','bank_accounts','bank_transactions'] %}
+        <a href="/api/data/table-export?table={{ tbl }}&empty=1"
+           class="btn btn-outline btn-sm" download>
+          ⬇ {{ tbl }}.csv
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
 </div>
 
+
+
+<!-- Purge Confirm Modal -->
+<div class="modal-overlay" id="purge-confirm-modal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>🗑 Purge Deleted Records</h3>
+      <button class="modal-close" onclick="closeModal('purge-confirm-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;margin-bottom:6px">
+        Permanently delete all soft-deleted rows from <strong id="purge-modal-tbl"></strong>?
+      </p>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:18px">
+        This cannot be undone. A safety backup will be created first unless you choose to skip it.
+      </p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+        <button class="btn btn-outline" onclick="closeModal('purge-confirm-modal')">Cancel</button>
+        <button class="btn btn-outline" onclick="doPurge(true)"
+                style="border-color:var(--orange,#f59e0b);color:var(--orange,#f59e0b)">
+          🗑 Purge (skip backup)
+        </button>
+        <button class="btn btn-danger" onclick="doPurge(false)">
+          💾 Backup &amp; Purge
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reset Defaults Modal -->
+<div class="modal-overlay" id="reset-defaults-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <h3>↺ Reset to Defaults</h3>
+      <button class="modal-close" onclick="closeModal('reset-defaults-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
+        Select which settings to reset. Company info, file paths, and all financial data are never changed.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="rd-overhead" checked style="margin-top:2px">
+          <div><strong>Overhead &amp; Profit defaults</strong>
+            <div style="font-size:11px;color:var(--text-dim)">Overhead 5%, Insurance 1%, Owner Wages 11%, Profit 20%, Markup 0.20</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="rd-prefs" checked style="margin-top:2px">
+          <div><strong>App preferences</strong>
+            <div style="font-size:11px;color:var(--text-dim)">Time Clock: off, Exit Confirmation: on</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="rd-backup" checked style="margin-top:2px">
+          <div><strong>Backup settings</strong>
+            <div style="font-size:11px;color:var(--text-dim)">Auto-backup: On Shutdown, Keep 30 backups</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="rd-ledger-view" checked style="margin-top:2px">
+          <div><strong>Ledger view settings</strong>
+            <div style="font-size:11px;color:var(--text-dim)">Rows per page: 50, column widths: reset to defaults, sort: Date descending</div>
+          </div>
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('reset-defaults-modal')">Cancel</button>
+      <button class="btn btn-warning" onclick="applyResetDefaults()">↺ Reset Selected</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -623,25 +832,27 @@ window.addEventListener('load', () => {
 // ─────────────────────────────────────────────
 function resetBankModal() {
   document.getElementById('bank-modal-title').textContent = 'Add Bank Account';
-  document.getElementById('bank-acct-id').value = '';
-  document.getElementById('bank-acct-name').value = '';
-  document.getElementById('bank-acct-type').value = 'Checking';
-  document.getElementById('bank-acct-inst').value = '';
-  document.getElementById('bank-acct-last4').value = '';
-  document.getElementById('bank-acct-bal').value = '0.00';
-  document.getElementById('bank-acct-notes').value = '';
+  document.getElementById('bank-acct-id').value     = '';
+  document.getElementById('bank-acct-name').value   = '';
+  document.getElementById('bank-acct-type').value   = 'Checking';
+  document.getElementById('bank-acct-inst').value   = '';
+  document.getElementById('bank-acct-last4').value  = '';
+  document.getElementById('bank-acct-bal').value    = '0.00';
+  document.getElementById('bank-acct-notes').value  = '';
+  document.getElementById('bank-acct-folder').value = '';
   openModal('modal-bank-acct');
 }
 function editBankAcct(btn) {
-  const acct = JSON.parse(btn.dataset.acct);
+  const d = btn.dataset;
   document.getElementById('bank-modal-title').textContent = 'Edit Bank Account';
-  document.getElementById('bank-acct-id').value = acct.id || '';
-  document.getElementById('bank-acct-name').value = acct.account_name || '';
-  document.getElementById('bank-acct-type').value = acct.account_type || 'Checking';
-  document.getElementById('bank-acct-inst').value = acct.institution_name || '';
-  document.getElementById('bank-acct-last4').value = acct.last_four || '';
-  document.getElementById('bank-acct-bal').value = acct.current_balance || 0;
-  document.getElementById('bank-acct-notes').value = acct.notes || '';
+  document.getElementById('bank-acct-id').value     = d.id     || '';
+  document.getElementById('bank-acct-name').value   = d.name   || '';
+  document.getElementById('bank-acct-type').value   = d.type   || 'Checking';
+  document.getElementById('bank-acct-inst').value   = d.inst   || '';
+  document.getElementById('bank-acct-last4').value  = d.last4  || '';
+  document.getElementById('bank-acct-bal').value    = d.bal    || 0;
+  document.getElementById('bank-acct-notes').value  = d.notes  || '';
+  document.getElementById('bank-acct-folder').value = d.folder || '';
   openModal('modal-bank-acct');
 }
 function resetCategoryModal() {
@@ -667,32 +878,30 @@ function editCategory(btn) {
 }
 
 
-async function verifyCerts(btn) {
-  btn.disabled = true; btn.textContent = 'Verifying…';
-  const r = await fetch('/api/certs/verify-all', {method:'POST'});
-  const d = await r.json();
-  btn.disabled = false; btn.textContent = '🔍 Verify All Cert Files';
-  if (d.success) {
-    document.getElementById('certVerifyResult').textContent =
-      `✅ Checked ${d.checked} cert records against: ${d.folder || '(folder not configured)'}`;
-    showToast('Cert verification complete', 'success');
-  } else {
-    document.getElementById('certVerifyResult').textContent = `❌ ${d.error}`;
+async function scanCOIPdfs(btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Scanning…';
+  const res = document.getElementById('coiScanResult');
+  res.textContent = '';
+  try {
+    const r = await fetch('/api/certs/scan-pdfs', {method:'POST'});
+    const d = await r.json();
+    if (d.error) {
+      res.style.color = 'var(--red)';
+      res.textContent = '❌ ' + d.error;
+    } else {
+      res.style.color = 'var(--green)';
+      res.textContent = `✅ Matched ${d.matched} PDF${d.matched!==1?'s':''}, created ${d.created} new cert record${d.created!==1?'s':''}` +
+        (d.unmatched?.length ? ` · ${d.unmatched.length} unmatched: ${d.unmatched.slice(0,3).join(', ')}` : '');
+    }
+  } catch(e) {
+    res.style.color = 'var(--red)';
+    res.textContent = '❌ Error: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
   }
 }
 
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) overlay.classList.remove('open');
-  });
-});
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
-});
-
-// ─────────────────────────────────────────────
-//  Backup history / restore
-// ─────────────────────────────────────────────
 async function loadBackupHistory() {
   const panel = document.getElementById('backupHistoryPanel');
   const list  = document.getElementById('backupHistoryList');
@@ -718,28 +927,30 @@ async function loadBackupHistory() {
 }
 
 async function deleteBackup(path, name, btn) {
-  if (!confirm(`Delete backup?\n${name}\n\nThis cannot be undone.`)) return;
+  if (!await appConfirmDanger(`${name}\n\nThis cannot be undone.`, 'Delete Backup?', 'Delete', '🗑')) return;
   btn.disabled = true;
   const r = await fetch('/api/backup/delete', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({path})
+    body: JSON.stringify({name})
   });
   const d = await r.json();
   if (d.success) {
-    btn.closest('div[style]').remove();
     showToast('Backup deleted', 'success');
+    // Reload backup grid so list is accurate
+    setTimeout(() => buildBackupGrid(), 400);
   } else {
     alert('Delete failed: ' + (d.error || 'unknown error'));
     btn.disabled = false;
   }
 }
 
-async function saveAutoBackupToggle(cb) {
+async function saveAutoBackupMode(val) {
   const fd = new FormData();
-  fd.append('auto_backup_enabled', cb.checked ? '1' : '0');
+  fd.append('auto_backup_mode', val);
   await fetch('/settings/company', {method:'POST', body: fd});
-  showToast(cb.checked ? 'Auto-backup enabled' : 'Auto-backup disabled', 'success');
+  const lbl = {startup:'On Startup', shutdown:'On Shutdown', never:'Manual Only'};
+  showToast('Auto-backup: ' + (lbl[val]||val), 'success');
 }
 
 function showRestoreDialog(zipPath, zipName) {
@@ -769,7 +980,7 @@ async function doRestore(zipPath) {
   const modal = document.getElementById('restore-modal');
   const tables = Array.from(modal.querySelectorAll('input:checked')).map(cb => cb.value);
   if (!tables.length) { alert('No tables selected.'); return; }
-  if (!confirm(`Restore ${tables.length} table(s)?\nThis replaces current data. A rescue backup is saved first.`)) return;
+  if (!await appConfirm(`Restore ${tables.length} table(s)?\nThis replaces current data. A rescue backup is saved first.`, 'Restore Backup', '♻️')) return;
   const btn = modal.querySelector('button:last-child');
   btn.textContent = 'Restoring…'; btn.disabled = true;
   const r = await fetch('/api/backup/restore', {
@@ -856,34 +1067,95 @@ async function runSelectiveBackup() {
   const include_certs = document.getElementById('bk-certs').checked;
   const status = document.getElementById('bk-status');
   if (!tables.length && !include_db) { alert('Select at least one item to include.'); return; }
-  status.style.color = 'var(--accent)';
-  status.textContent = '⏳ Creating backup…';
+  status.textContent = '';
+  if (typeof showBackupOverlay === 'function') showBackupOverlay('Creating Selective Backup…', 'Compressing selected data into ZIP…');
+  try {
   const r = await fetch('/api/backup/selective', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({tables, include_db, include_receipts, include_certs, label:'selective'})
   });
   const d = await r.json();
+  if (typeof hideBackupOverlay === 'function') hideBackupOverlay();
   if (d.success) {
+    status.style.color = 'var(--green)';
     status.textContent = `✓ Saved: ${d.filename} (${d.size_mb} MB, ${d.tables.length} tables)`;
+    showToast('Backup created: ' + d.filename, 'success');
   } else {
     status.style.color = 'var(--red,#ef4444)';
     status.textContent = '✗ Error: ' + (d.error || 'Unknown');
   }
+  } catch(e) {
+    if (typeof hideBackupOverlay === 'function') hideBackupOverlay();
+    status.style.color = 'var(--red)';
+    status.textContent = '✗ Network error';
+  }
+}
+
+// _pendingPurgeTbl holds table name while purge-confirm modal is open
+let _pendingPurgeTbl = null;
+
+function purgeTable(tbl) {
+  _pendingPurgeTbl = tbl;
+  document.getElementById('purge-modal-tbl').textContent = tbl;
+  openModal('purge-confirm-modal');
+}
+
+async function doPurge(skipBackup) {
+  closeModal('purge-confirm-modal');
+  const tbl = _pendingPurgeTbl;
+  if (!tbl) return;
+  _pendingPurgeTbl = null;
+  const statusEl = document.getElementById('purge-status');
+  statusEl.textContent = '⏳ Purging…';
+  statusEl.style.color = 'var(--text-dim)';
+  if (typeof showBackupOverlay === 'function') {
+    if (skipBackup) {
+      showBackupOverlay('Purging Records…', 'Permanently deleting soft-deleted rows…');
+    } else {
+      showBackupOverlay('Creating Safety Backup…', 'Backing up before permanent delete…');
+    }
+  }
+  try {
+    const r = await fetch('/api/data/table-purge', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({table: tbl, skip_backup: skipBackup})
+    });
+    if (typeof hideBackupOverlay === 'function') hideBackupOverlay();
+    const d = await r.json().catch(() => ({}));
+    if (d.success || d.purged !== undefined) {
+      statusEl.style.color = 'var(--green)';
+      statusEl.textContent = `✓ Purged ${d.purged ?? 0} deleted rows from "${tbl}"`;
+      showToast('Purged ' + tbl, 'success');
+      loadTableStats();
+    } else {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = '✗ Error: ' + (d.error || 'Unknown');
+    }
+  } catch(e) {
+    if (typeof hideBackupOverlay === 'function') hideBackupOverlay();
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '✗ Network error';
+  }
 }
 
 async function dmClear(key, label) {
-  if (!confirm(`Soft-delete all active rows in ${label}?\n\nRows are hidden but recoverable with ↩ Restore.\nA backup is created automatically first.`)) return;
-  const r = await fetch('/api/data/table-clear', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({table: key})
-  });
-  const d = await r.json();
-  if (d.success) { showToast(`Cleared ${d.cleared} rows from ${label}`, 'success'); loadTableStats(); }
-  else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+  if (!await appConfirmDanger(`Soft-delete all active rows in ${label}?\n\nRows are hidden but recoverable with ↩ Restore.\nA backup is created automatically first.`, 'Clear Table?', 'Clear', '🗑')) return;
+  if (typeof showBackupOverlay === 'function') showBackupOverlay(`Clearing ${label}…`, 'Creating backup then soft-deleting rows…');
+  try {
+    const r = await fetch('/api/data/table-clear', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({table: key})
+    });
+    const d = await r.json();
+    if (d.success) { showToast(`Cleared ${d.cleared} rows from ${label}`, 'success'); loadTableStats(); }
+    else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+  } finally {
+    if (typeof hideBackupOverlay === 'function') hideBackupOverlay();
+  }
 }
 
 async function dmRestore(key, label) {
-  if (!confirm(`Restore all soft-deleted rows in ${label}?`)) return;
+  if (!await appConfirm(`Restore all soft-deleted rows in ${label}?`, 'Restore Rows', '↩')) return;
   const r = await fetch('/api/data/table-restore', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({table: key})
@@ -894,21 +1166,38 @@ async function dmRestore(key, label) {
 }
 
 function dmImport(key, label) {
+  // Ledger import uses the dedicated ledger import modal on /ledger
+  if (key === 'ledger') {
+    window.location.href = '/ledger?open_import=1';
+    return;
+  }
+  // Bank transactions use the reconciliation import page (handles CSV parsing, dedup, auto-match)
+  if (key === 'bank_transactions') {
+    pickBankAccountForImport();
+    return;
+  }
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.csv';
   inp.onchange = async () => {
     if (!inp.files[0]) return;
-    if (!confirm(`Append CSV rows to ${label}?\n\nExisting data is not changed. Rows are added.`)) return;
+    if (!await appConfirm(`Append CSV rows to ${label}?\n\nExisting data is not changed. Rows are added.`, 'Import CSV', '⬆')) return;
     const form = new FormData();
     form.append('file', inp.files[0]);
     form.append('table', key);
     form.append('mode', 'append');
-    const r = await fetch('/api/data/table-import', {method:'POST', body:form});
-    const d = await r.json();
-    if (d.success) {
-      showToast(`Imported ${d.inserted} rows into ${label}${d.skipped ? ' (' + d.skipped + ' skipped)' : ''}`, 'success');
-      loadTableStats();
-    } else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+    const signal = showImportModal(`Importing ${label}…`, `Processing ${inp.files[0].name}…`);
+    try {
+      const r = await fetch('/api/data/table-import', {method:'POST', body:form, signal});
+      const d = await r.json();
+      if (d.success) {
+        hideImportModal('success', `${d.inserted} rows imported${d.skipped ? ', ' + d.skipped + ' skipped' : ''}`);
+        loadTableStats();
+      } else {
+        hideImportModal('error', d.error || 'Unknown error');
+      }
+    } catch(e) {
+      if (e.name !== 'AbortError') hideImportModal('error', e.message);
+    }
   };
   inp.click();
 }
@@ -918,17 +1207,24 @@ function dmReplace(key, label) {
   inp.type = 'file'; inp.accept = '.csv';
   inp.onchange = async () => {
     if (!inp.files[0]) return;
-    if (!confirm(`REPLACE all data in ${label}?\n\nExisting rows will be soft-deleted, then your CSV imported.\nA backup is created first. This cannot be undone except via backup restore.`)) return;
+    if (!await appConfirmDanger(`REPLACE all data in ${label}?\n\nExisting rows will be soft-deleted, then your CSV imported.\nA backup is created first.`, 'Replace Table?', 'Replace', '♻️')) return;
     const form = new FormData();
     form.append('file', inp.files[0]);
     form.append('table', key);
     form.append('mode', 'replace');
-    const r = await fetch('/api/data/table-import', {method:'POST', body:form});
-    const d = await r.json();
-    if (d.success) {
-      showToast(`Replaced ${label} — ${d.inserted} rows imported`, 'success');
-      loadTableStats();
-    } else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+    const signal = showImportModal(`Replacing ${label}…`, `Creating backup then importing ${inp.files[0].name}…`);
+    try {
+      const r = await fetch('/api/data/table-import', {method:'POST', body:form, signal});
+      const d = await r.json();
+      if (d.success) {
+        hideImportModal('success', `${d.inserted} rows imported`);
+        loadTableStats();
+      } else {
+        hideImportModal('error', d.error || 'Unknown error');
+      }
+    } catch(e) {
+      if (e.name !== 'AbortError') hideImportModal('error', e.message);
+    }
   };
   inp.click();
 }
@@ -947,5 +1243,229 @@ async function importClientsCsv(input) {
   if (d.success) alert(`Imported ${d.added} clients (${d.skipped} skipped as duplicates).`);
   else alert('Import failed: ' + (d.error || 'Unknown'));
 }
+
+// ─────────────────────────────────────────────
+//  Settings auto-save helpers
+// ─────────────────────────────────────────────
+let _companyDebounce = null;
+
+function autoSaveForm(formId, statusId) {
+  const statusEl = document.getElementById(statusId);
+  if (statusEl) statusEl.textContent = '…';
+  clearTimeout(_companyDebounce);
+  _companyDebounce = setTimeout(async () => {
+    const form = document.getElementById(formId);
+    if (!form) return;
+    try {
+      const r = await fetch(form.action, {method: 'POST', body: new FormData(form)});
+      if (r.ok) {
+        if (statusEl) { statusEl.textContent = '✓ Saved'; setTimeout(() => statusEl.textContent = '', 2000); }
+      } else {
+        if (statusEl) statusEl.textContent = '✗ Error saving';
+      }
+    } catch(e) {
+      if (statusEl) statusEl.textContent = '✗ Network error';
+    }
+  }, 900);
+}
+
+async function runManualBackup(btn) {
+  btn.disabled = true;
+  showBackupOverlay('Creating Backup…', 'Zipping database and attachments…');
+  try {
+    const r = await fetch('/api/backup/manual', {method:'POST'});
+    hideBackupOverlay();
+    const d = await r.json().catch(() => ({}));
+    if (d.success) {
+      showToast('✓ Backup saved: ' + (d.filename || ''), 'success');
+    } else {
+      showToast('✗ Backup failed: ' + (d.error || 'Unknown'), 'error');
+    }
+  } catch(e) {
+    hideBackupOverlay();
+    showToast('✗ Network error during backup', 'error');
+  }
+  btn.disabled = false;
+}
+
+async function savePref(field, value) {
+  const statusEl = document.getElementById('pref-save-status');
+  if (statusEl) statusEl.textContent = '…';
+  try {
+    const r = await fetch('/api/settings/patch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({[field]: value})
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.success !== false) {
+      if (statusEl) { statusEl.textContent = '✓ Saved'; setTimeout(() => statusEl.textContent = '', 2000); }
+    } else {
+      if (statusEl) statusEl.textContent = '✗ Error: ' + (d.error || 'Unknown');
+    }
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '✗ Network error';
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Reset to Defaults
+// ─────────────────────────────────────────────
+async function applyResetDefaults() {
+  const resetOverhead = document.getElementById('rd-overhead')?.checked;
+  const resetPrefs    = document.getElementById('rd-prefs')?.checked;
+  const resetBackup   = document.getElementById('rd-backup')?.checked;
+  if (!resetOverhead && !resetPrefs && !resetBackup) {
+    alert('Please select at least one group to reset.'); return;
+  }
+  const payload = {};
+  if (resetOverhead) Object.assign(payload, {
+    default_overhead_pct: 5.0, default_insurance_pct: 1.0,
+    default_owner_wages_pct: 11.0, default_profit_pct: 20.0, default_markup_pct: 0.20
+  });
+  if (resetPrefs) Object.assign(payload, {time_tracker_enabled: 0, confirm_on_exit: 1});
+  if (resetBackup) Object.assign(payload, {auto_backup_mode: 'shutdown', backup_keep_count: 30});
+
+  // Ledger view defaults are localStorage, not server-side
+  const resetLedgerView = document.getElementById('rd-ledger-view')?.checked;
+  if (resetLedgerView) {
+    const LS_KEYS = ['LS_COLS_v4', 'ledger_per_page', 'ledger_sort', 'ledger_sort_dir'];
+    LS_KEYS.forEach(k => {
+      try { localStorage.removeItem(k); } catch(e) {}
+    });
+  }
+
+  const r = await fetch('/api/settings/patch', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const d = await r.json().catch(() => ({}));
+  if (d.success !== false) {
+    showToast('Defaults restored. Reloading…', 'success');
+    closeModal('reset-defaults-modal');
+    setTimeout(() => location.reload(), 800);
+  } else {
+    showToast('Reset failed: ' + (d.error || 'unknown'), 'error');
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Wire company form to auto-save on change
+// ─────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const companyForm = document.getElementById('company-form');
+  const statusEl = document.getElementById('company-save-status');
+  if (companyForm) {
+    companyForm.querySelectorAll('input, select, textarea').forEach(el => {
+      el.addEventListener('change', () => autoSaveForm('company-form', 'company-save-status'));
+    });
+  }
+  // Restore hash-based tab
+  const hash = window.location.hash.slice(1);
+  if (hash && document.getElementById('pane-' + hash)) switchTab(hash);
+});
+
+
+// Bank transactions import — show account picker then navigate to recon import page
+async function pickBankAccountForImport() {
+  // Fetch bank accounts from the API
+  let accounts = [];
+  try {
+    const r = await fetch('/api/bank-accounts');
+    if (r.ok) accounts = await r.json();
+  } catch(e) {}
+
+  if (!accounts.length) {
+    await appAlert('No bank accounts found. Add a bank account in Settings → Banking first.', 'No Accounts');
+    return;
+  }
+
+  if (accounts.length === 1) {
+    window.location.href = `/reconciliation/${accounts[0].id}/import`;
+    return;
+  }
+
+  // Build a simple picker modal
+  const opts = accounts.map(a =>
+    `<button class="btn btn-outline" style="width:100%;text-align:left;margin-bottom:6px;padding:10px"
+             onclick="document.getElementById('bank-pick-overlay').remove();window.location.href='/reconciliation/${a.id}/import'">
+       <strong>${a.account_name}</strong>
+       <span class="text-dim" style="font-size:11px;margin-left:8px">${a.account_type}</span>
+     </button>`
+  ).join('');
+
+  document.body.insertAdjacentHTML('beforeend',
+    `<div id="bank-pick-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center">
+      <div style="background:var(--card);border-radius:8px;padding:24px;min-width:320px;max-width:420px;width:90%">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3 style="font-size:15px;font-weight:700;margin:0">🏦 Choose Bank Account</h3>
+          <button style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--text-dim)"
+                  onclick="document.getElementById('bank-pick-overlay').remove()">✕</button>
+        </div>
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">Select which account to import transactions into:</p>
+        ${opts}
+      </div>
+    </div>`
+  );
+}
+
+
+// ── Clear Account Matches ────────────────────────────────────────────────
+async function clearAccountMatches(btn) {
+  const acctId   = btn.dataset.acctId;
+  const acctName = btn.dataset.acctName;
+
+  // First: get current stats so user knows what they're clearing
+  let statsMsg = '';
+  try {
+    const r = await fetch('/api/recon/account/' + acctId + '/match-stats');
+    const d = await r.json();
+    if (d.matched !== undefined) {
+      statsMsg = d.matched + ' matched transactions will be reset to Unmatched.';
+      if (d.ledger_freed) statsMsg += ' ' + d.ledger_freed + ' ledger entries will be un-assigned.';
+    }
+  } catch(e) {}
+
+  const msg = 'Clear ALL match results for "' + acctName + '"?\n\n' +
+    (statsMsg || 'All matched transactions will be reset to Unmatched.') + '\n\n' +
+    'This resets Auto-Matched AND Manual-Matched (reconciled) entries.\n' +
+    'Ledger entries will be set back to Pending and unlinked.\n\n' +
+    'This does NOT delete any transactions or ledger entries.\n' +
+    'Use this to fully reset and re-run auto-match.';
+
+  const confirmed = await appConfirmDanger(msg, 'Clear Match Results?', 'Clear Matches', '↺');
+  if (!confirmed) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Clearing…';
+
+  try {
+    const res = await fetch('/api/recon/account/' + acctId + '/clear-matches', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+    });
+    const data = await res.json();
+    if (data.error) {
+      appAlert('Error: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = '↺ Clear Matches';
+      return;
+    }
+    appAlert(
+      'Done! ' + (data.reset || 0) + ' transactions reset to Unmatched. ' +
+      (data.ledger_freed || 0) + ' ledger entries un-assigned.\n\n' +
+      'You can now re-run Auto-Match on the reconciliation page.',
+      'Matches Cleared'
+    );
+    // No page reload needed — stats will update next time user opens reconciliation
+    btn.disabled = false;
+    btn.textContent = '↺ Clear Matches';
+  } catch(e) {
+    appAlert('Request failed: ' + e);
+    btn.disabled = false;
+    btn.textContent = '↺ Clear Matches';
+  }
+}
+
 </script>
 {% endblock %}

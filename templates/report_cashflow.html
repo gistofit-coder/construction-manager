@@ -8,6 +8,7 @@
   <h2 style="font-size:18px;font-weight:700">Cash Flow — {{ year }}</h2>
   <form method="GET" class="flex gap-8" style="margin-left:auto">
     <select name="year" onchange="this.form.submit()">
+      <option value="all" {% if year=='all' %}selected{% endif %}>All Years</option>
       {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
     </select>
     <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print</button>
@@ -25,7 +26,7 @@
 
 <!-- Chart -->
 <div class="card" style="margin-bottom:16px">
-  <div class="card-header"><span class="card-title">Monthly Cash Flow</span></div>
+  <div class="card-header"><span class="card-title">{% if year == 'all' %}Yearly{% else %}Monthly{% endif %} Cash Flow</span></div>
   <div class="card-body" style="height:220px;position:relative">
     <canvas id="cfChart"></canvas>
   </div>
@@ -36,7 +37,7 @@
     <table>
       <thead>
         <tr>
-          <th>Month</th>
+          <th>{% if year == 'all' %}Year{% else %}Month{% endif %}</th>
           <th style="text-align:right">Inflows (Collected)</th>
           <th style="text-align:right">Outflows (Paid)</th>
           <th style="text-align:right">Net</th>

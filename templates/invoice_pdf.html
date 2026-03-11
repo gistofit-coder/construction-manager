@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Invoice #{{ invoice.invoice_number }}</title>
+  <title>Invoice #{{ invoice.invoice_number }}{% if pdf_mode == 'summary' %} — Customer Copy{% endif %}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -11,47 +11,75 @@
       color: #222;
       background: #fff;
       padding: 40px;
-      max-width: 800px;
+      max-width: 820px;
       margin: 0 auto;
     }
     @media print {
       body { padding: 0; }
-      .no-print { display: none; }
+      .no-print { display: none !important; }
     }
-    /* Header */
-    .invoice-header { display: flex; justify-content: space-between; margin-bottom: 36px; }
-    .company-block h1 { font-size: 20px; font-weight: 700; color: #1a1a2e; }
-    .company-block p  { color: #555; font-size: 11px; line-height: 1.6; margin-top: 4px; }
+
+    /* ── Top toolbar ── */
+    .toolbar {
+      display: flex; gap: 10px; align-items: center;
+      margin-bottom: 24px; padding-bottom: 16px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .print-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px; background: #3d85f5; color: #fff;
+      border: none; border-radius: 4px; font-size: 12px;
+      cursor: pointer; font-family: inherit; text-decoration: none;
+    }
+    .print-btn:hover { background: #5a99ff; }
+    .mode-label {
+      font-size: 11px; color: #888; margin-left: auto;
+    }
+
+    /* ── Header ── */
+    .invoice-header {
+      display: flex; justify-content: space-between;
+      align-items: flex-start; margin-bottom: 32px;
+    }
+    .company-block { display: flex; gap: 18px; align-items: flex-start; max-width: 55%; }
+    .company-logo  { max-height: 70px; max-width: 140px; object-fit: contain; flex-shrink: 0; }
+    .company-text h1 { font-size: 18px; font-weight: 700; color: #1a1a2e; }
+    .company-text p  { color: #555; font-size: 11px; line-height: 1.7; margin-top: 4px; }
     .invoice-meta    { text-align: right; }
-    .invoice-meta h2 { font-size: 28px; font-weight: 700; color: #3d85f5; letter-spacing: 2px; }
-    .invoice-meta .inv-num { font-size: 16px; font-weight: 600; color: #333; }
-    .invoice-meta .meta-row { font-size: 11px; color: #666; margin-top: 4px; }
+    .invoice-meta .inv-word { font-size: 30px; font-weight: 700; color: #3d85f5; letter-spacing: 2px; }
+    .invoice-meta .inv-num  { font-size: 16px; font-weight: 600; color: #333; }
+    .invoice-meta .meta-row { font-size: 11px; color: #666; margin-top: 5px; }
+    .invoice-meta .meta-row strong { color: #333; }
 
-    /* Parties */
-    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 28px; }
-    .party-block h3  { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #888; margin-bottom: 6px; }
-    .party-block p   { font-size: 12px; line-height: 1.6; }
-    .party-block .name { font-weight: 600; font-size: 13px; }
-
-    /* Status badge */
+    /* ── Status badge ── */
     .status-badge {
       display: inline-block; padding: 3px 12px; border-radius: 12px;
-      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-      margin-bottom: 20px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.5px; margin-bottom: 20px;
     }
     .status-Paid    { background: #d4edda; color: #155724; }
     .status-Pending { background: #e2e3e5; color: #383d41; }
     .status-Partial { background: #fff3cd; color: #856404; }
     .status-Overdue { background: #f8d7da; color: #721c24; }
 
-    /* Description */
+    /* ── Parties ── */
+    .parties { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 28px; }
+    .party-block h3  { font-size: 10px; font-weight: 700; text-transform: uppercase;
+                        letter-spacing: 0.8px; color: #888; margin-bottom: 6px; }
+    .party-block p   { font-size: 12px; line-height: 1.7; }
+    .party-block .name { font-weight: 600; font-size: 13px; }
+
+    /* ── Description block ── */
     .description-block {
       background: #f8f9fa; padding: 14px 16px; border-radius: 6px;
       margin-bottom: 24px; font-size: 12px; line-height: 1.6;
     }
-    .description-block strong { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #888; margin-bottom: 4px; }
+    .description-block strong {
+      display: block; font-size: 10px; text-transform: uppercase;
+      letter-spacing: 0.5px; color: #888; margin-bottom: 4px;
+    }
 
-    /* Timesheet table */
+    /* ── Tables (both modes) ── */
     .ts-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
     .ts-table thead th {
       background: #f0f0f5; padding: 8px 10px;
@@ -61,8 +89,8 @@
     }
     .ts-table thead th.right { text-align: right; }
     .ts-table tbody td {
-      padding: 8px 10px; border-bottom: 1px solid #eee;
-      font-size: 11px; color: #333;
+      padding: 7px 10px; border-bottom: 1px solid #eee;
+      font-size: 11px; color: #333; vertical-align: top;
     }
     .ts-table tbody td.right { text-align: right; font-family: monospace; }
     .ts-table tfoot td {
@@ -71,59 +99,91 @@
     }
     .ts-table tfoot td.right { text-align: right; font-family: monospace; }
 
-    /* Totals box */
-    .totals-box {
-      display: flex; justify-content: flex-end; margin-bottom: 32px;
+    /* ── Summary mode category blocks ── */
+    .summary-section-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.8px; color: #888; padding: 12px 0 4px;
     }
-    .totals-inner { min-width: 260px; }
+
+    /* ── Totals ── */
+    .totals-box { display: flex; justify-content: flex-end; margin-bottom: 32px; }
+    .totals-inner { min-width: 280px; }
     .totals-row {
       display: flex; justify-content: space-between;
       padding: 6px 0; border-bottom: 1px solid #eee; font-size: 12px;
     }
     .totals-row.total {
       font-size: 15px; font-weight: 700;
-      border-top: 2px solid #333; border-bottom: none; padding-top: 10px; margin-top: 4px;
+      border-top: 2px solid #333; border-bottom: none;
+      padding-top: 10px; margin-top: 4px;
     }
+    .totals-row .amt-green { color: #155724; }
+    .totals-row .amt-red   { color: #721c24; }
     .totals-row.total .amt { color: {% if invoice.balance_due <= 0 %}#155724{% elif invoice.status == 'Overdue' %}#721c24{% else %}#333{% endif %}; }
 
-    /* Footer */
+    /* ── Footer ── */
     .invoice-footer {
       border-top: 1px solid #ddd; padding-top: 16px;
       font-size: 10px; color: #888; text-align: center; line-height: 1.6;
     }
 
-    /* Print button */
-    .print-btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      margin-bottom: 24px; padding: 8px 16px;
-      background: #3d85f5; color: #fff; border: none;
-      border-radius: 4px; font-size: 12px; cursor: pointer; font-family: inherit;
+    /* ── Mode banner ── */
+    .mode-banner {
+      display: inline-block; background: #e8f0fe; color: #1a56db;
+      border: 1px solid #c7d7fc; border-radius: 4px;
+      font-size: 10px; font-weight: 700; padding: 2px 10px;
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 20px;
     }
-    .print-btn:hover { background: #5a99ff; }
   </style>
 </head>
 <body>
 
-<button class="print-btn no-print" onclick="window.print()">🖨 Print / Save PDF</button>
+<!-- Toolbar -->
+<div class="toolbar no-print">
+  <button class="print-btn" onclick="window.print()">🖨 Print / Save PDF</button>
+  {% if pdf_mode == 'summary' %}
+    <a class="print-btn" href="/invoices/{{ invoice.id }}/pdf?mode=detail"
+       style="background:#555">🔍 Switch to Detailed View</a>
+  {% else %}
+    <a class="print-btn" href="/invoices/{{ invoice.id }}/pdf?mode=summary"
+       style="background:#555">📄 Switch to Customer Summary</a>
+  {% endif %}
+  <span class="mode-label">
+    {% if pdf_mode == 'summary' %}Customer Copy — category totals only{% else %}Detailed View — full line items{% endif %}
+  </span>
+</div>
+
+<!-- Mode indicator (prints with doc) -->
+{% if pdf_mode == 'summary' %}
+<div class="mode-banner">Customer Invoice</div><br>
+{% endif %}
 
 <!-- Header -->
 <div class="invoice-header">
   <div class="company-block">
-    <h1>{{ config.company_name or 'Company Name' }}</h1>
-    <p>
-      {% if config.address %}{{ config.address }}<br>{% endif %}
-      {% if config.city_state_zip %}{{ config.city_state_zip }}<br>{% endif %}
-      {% if config.phone %}{{ config.phone }}<br>{% endif %}
-      {% if config.email %}{{ config.email }}<br>{% endif %}
-      {% if config.license_number %}License #{{ config.license_number }}{% endif %}
-    </p>
+    {% if config.company_logo_path %}
+      <img src="/files/logo" alt="logo" class="company-logo">
+    {% endif %}
+    <div class="company-text">
+      <h1>{{ config.company_name or 'Company Name' }}</h1>
+      <p>
+        {% if config.address %}{{ config.address }}<br>{% endif %}
+        {% if config.city_state_zip %}{{ config.city_state_zip }}<br>{% endif %}
+        {% if config.phone %}{{ config.phone }}<br>{% endif %}
+        {% if config.email %}{{ config.email }}<br>{% endif %}
+        {% if config.license_number %}License #{{ config.license_number }}{% endif %}
+      </p>
+    </div>
   </div>
   <div class="invoice-meta">
-    <h2>INVOICE</h2>
+    <div class="inv-word">INVOICE</div>
     <div class="inv-num">#{{ invoice.invoice_number }}</div>
     <div class="meta-row">Date: <strong>{{ invoice.invoice_date }}</strong></div>
     {% if invoice.due_date %}
     <div class="meta-row">Due: <strong>{{ invoice.due_date }}</strong></div>
+    {% endif %}
+    {% if invoice.paid_date %}
+    <div class="meta-row">Paid: <strong>{{ invoice.paid_date }}</strong></div>
     {% endif %}
     {% if invoice.job_code %}
     <div class="meta-row">Job: <strong>{{ invoice.job_code }}</strong></div>
@@ -134,7 +194,7 @@
 <!-- Status badge -->
 <span class="status-badge status-{{ invoice.status }}">{{ invoice.status }}</span>
 
-<!-- Bill To -->
+<!-- Parties -->
 <div class="parties">
   <div class="party-block">
     <h3>Bill To</h3>
@@ -163,51 +223,109 @@
 </div>
 {% endif %}
 
-<!-- Timesheet detail (if any) -->
-{% if ts_rows %}
-<table class="ts-table">
-  <thead>
-    <tr>
-      <th>Date</th>
-      <th>Employee</th>
-      <th class="right">Hours</th>
-      <th class="right">Rate</th>
-      <th class="right">Amount</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for row in ts_rows %}
-    <tr>
-      <td>{{ row.entry_date }}</td>
-      <td>{{ row.emp_name or row.person_label or '—' }}</td>
-      <td class="right">{{ '{:.2f}'.format(row.hours) }}</td>
-      <td class="right">${{ '{:.2f}'.format(row.bill_rate) }}/hr</td>
-      <td class="right">${{ '{:,.2f}'.format(row.bill_amount) }}</td>
-    </tr>
-    {% endfor %}
-  </tbody>
-  <tfoot>
-    <tr>
-      <td colspan="2" class="text-dim">Subtotal</td>
-      <td class="right">{{ '{:.2f}'.format(ts_rows|sum(attribute='hours')) }}</td>
-      <td></td>
-      <td class="right">${{ '{:,.2f}'.format(ts_rows|sum(attribute='bill_amount')) }}</td>
-    </tr>
-  </tfoot>
-</table>
+<!-- ════════════════════════════════════════════════════════ -->
+<!--  DETAIL MODE  — full timesheet line items               -->
+<!-- ════════════════════════════════════════════════════════ -->
+{% if pdf_mode != 'summary' %}
+  {% if ts_rows %}
+  <table class="ts-table">
+    <thead>
+      <tr>
+        <th style="width:80px">Date</th>
+        <th style="width:90px">Category</th>
+        <th>Description</th>
+        <th style="width:90px">Person</th>
+        <th class="right" style="width:55px">Hours</th>
+        <th class="right" style="width:70px">Rate</th>
+        <th class="right" style="width:75px">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in ts_rows %}
+      <tr>
+        <td style="font-family:monospace;font-size:10px">{{ row.entry_date }}</td>
+        <td style="font-size:10px;color:#666">{{ row.work_type or '—' }}</td>
+        <td style="font-size:10px">{{ row.description or '—' }}</td>
+        <td style="font-size:10px">{{ row.emp_name or row.person_label or '—' }}</td>
+        <td class="right">{{ '{:.2f}'.format(row.hours) }}</td>
+        <td class="right" style="color:#666">${{ '{:.2f}'.format(row.bill_rate) }}</td>
+        <td class="right" style="font-weight:600">${{ '{:,.2f}'.format(row.bill_amount) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="4" style="color:#888;font-size:11px">Subtotal — {{ ts_rows|length }} line items</td>
+        <td class="right">{{ '{:.2f}'.format(ts_rows|sum(attribute='hours')) }} hrs</td>
+        <td></td>
+        <td class="right">${{ '{:,.2f}'.format(ts_rows|sum(attribute='bill_amount')) }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  {% endif %}
+
+<!-- ════════════════════════════════════════════════════════ -->
+<!--  SUMMARY MODE — category totals, no rates/names        -->
+<!-- ════════════════════════════════════════════════════════ -->
+{% else %}
+  {% if ts_rows %}
+  {# Build category totals in Jinja2 #}
+  {%- set ns = namespace(cats={}) -%}
+  {%- for row in ts_rows -%}
+    {%- set cat = row.work_type or 'General' -%}
+    {%- if cat not in ns.cats -%}
+      {%- set ns.cats = dict(ns.cats, **{cat: {'hours': 0.0, 'amount': 0.0}}) -%}
+    {%- endif -%}
+    {%- set ns.cats = dict(ns.cats, **{cat: {'hours': ns.cats[cat]['hours'] + row.hours, 'amount': ns.cats[cat]['amount'] + row.bill_amount}}) -%}
+  {%- endfor -%}
+
+  <table class="ts-table">
+    <thead>
+      <tr>
+        <th>Category / Description</th>
+        <th class="right" style="width:80px">Hours</th>
+        <th class="right" style="width:90px">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for cat, totals in ns.cats.items() %}
+      <tr>
+        <td>{{ cat }}</td>
+        <td class="right">{{ '{:.2f}'.format(totals.hours) }}</td>
+        <td class="right" style="font-weight:600">${{ '{:,.2f}'.format(totals.amount) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td style="color:#888">Total</td>
+        <td class="right">{{ '{:.2f}'.format(ts_rows|sum(attribute='hours')) }} hrs</td>
+        <td class="right">${{ '{:,.2f}'.format(ts_rows|sum(attribute='bill_amount')) }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  {% endif %}
 {% endif %}
 
-<!-- Totals -->
+<!-- Totals box -->
 <div class="totals-box">
   <div class="totals-inner">
     <div class="totals-row">
       <span>Invoice Total</span>
       <span class="amt">${{ '{:,.2f}'.format(invoice.amount) }}</span>
     </div>
+    {% if invoice.adjustment_amount %}
+    <div class="totals-row">
+      <span>Adjustment{% if invoice.adjustment_note %} — {{ invoice.adjustment_note }}{% endif %}</span>
+      <span class="amt {% if invoice.adjustment_amount < 0 %}amt-red{% else %}amt-green{% endif %}">
+        {{ '-' if invoice.adjustment_amount < 0 else '+' }}${{ '{:,.2f}'.format(invoice.adjustment_amount|abs) }}
+      </span>
+    </div>
+    {% endif %}
     {% if invoice.amount_paid > 0 %}
     <div class="totals-row">
-      <span>Amount Paid</span>
-      <span class="amt" style="color:#155724">–${{ '{:,.2f}'.format(invoice.amount_paid) }}</span>
+      <span>Amount Paid{% if invoice.paid_date %} ({{ invoice.paid_date }}){% endif %}</span>
+      <span class="amt amt-green">–${{ '{:,.2f}'.format(invoice.amount_paid) }}</span>
     </div>
     {% endif %}
     <div class="totals-row total">
@@ -218,15 +336,16 @@
 </div>
 
 {% if invoice.notes %}
-<div style="margin-bottom:24px;font-size:11px;color:#666;border-left:3px solid #ddd;padding-left:12px">
-  <strong style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px">Notes</strong><br>
+<div style="margin-bottom:24px;font-size:11px;color:#555;border-left:3px solid #ddd;padding-left:12px">
+  <strong style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Notes</strong>
   {{ invoice.notes }}
 </div>
 {% endif %}
 
 <!-- Footer -->
 <div class="invoice-footer">
-  {% if config.company_name %}{{ config.company_name }} · {% endif %}
+  {% if config.company_name %}{{ config.company_name }}
+  {% if config.license_number %} · License #{{ config.license_number }}{% endif %} · {% endif %}
   Payment due {{ invoice.due_date or '30 days from invoice date' }}.
   Thank you for your business.
 </div>

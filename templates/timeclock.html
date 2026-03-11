@@ -7,17 +7,22 @@
 <div class="section-header">
   <h2>Program Time Clock</h2>
   <div class="actions">
-    <span class="text-dim" style="font-size:13px">
+    <span class="text-dim" style="font-size:13px;margin-right:12px">
       Total: <strong>{{ '{:.1f}'.format(total_hours or 0) }} hrs</strong>
+    </span>
+    <!-- Toggle directly on this page — updates config instantly without going to settings -->
+    <span style="font-size:12px;color:var(--text-dim);margin-right:6px">Time Clock:</span>
+    <label class="toggle-switch" style="vertical-align:middle" title="Toggle time clock on/off">
+      <input type="checkbox" id="tc-toggle"
+             {% if config.time_tracker_enabled %}checked{% endif %}
+             onchange="toggleTimeClock(this.checked)">
+      <span class="toggle-slider"></span>
+    </label>
+    <span id="tc-status-lbl" style="font-size:11px;color:var(--text-dim);margin-left:6px">
+      {{ 'Enabled' if config.time_tracker_enabled else 'Disabled' }}
     </span>
   </div>
 </div>
-
-{% if not config.time_tracker_enabled %}
-<div class="alert alert-warning">
-  ⚠️ Time Clock is currently <strong>disabled</strong>. Enable it in <a href="/settings">Settings → Program Time Clock</a>.
-</div>
-{% endif %}
 
 <div class="card">
   <div class="card-body no-pad">
@@ -30,6 +35,7 @@
           <th style="text-align:right">Active Time</th>
           <th>Work Description</th>
           <th>Tags</th>
+          <th style="width:70px"></th>
         </tr>
       </thead>
       <tbody>
@@ -54,10 +60,22 @@
               {% endif %}
             {% endfor %}
           </td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-outline btn-xs" title="Edit"
+                    data-id="{{ s.id }}"
+                    data-start="{{ s.start_time[:16] }}"
+                    data-end="{{ (s.end_time or '')[:16] }}"
+                    data-minutes="{{ s.active_minutes or 0 }}"
+                    data-desc="{{ s.description|e }}"
+                    data-tags="{{ (s.tags or '')|e }}"
+                    onclick="editSessionFromBtn(this)">✏️</button>
+            <button class="btn btn-danger btn-xs" title="Delete"
+                    onclick="deleteSession({{ s.id }})">🗑</button>
+          </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="6" class="text-dim" style="text-align:center;padding:30px">
+          <td colspan="7" class="text-dim" style="text-align:center;padding:30px">
             No sessions recorded yet.
           </td>
         </tr>
@@ -79,6 +97,41 @@
 </div>
 {% endif %}
 
+
+<!-- ── Edit Session Modal ── -->
+<div class="modal-overlay" id="tc-edit-modal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3>✏️ Edit Session</h3>
+      <button class="modal-close" onclick="closeModal('tc-edit-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tc-edit-id">
+      <div class="form-grid" style="grid-template-columns:1fr 1fr">
+        <div class="form-group">
+          <label>Start Time</label>
+          <input type="datetime-local" id="tc-edit-start" style="width:100%">
+        </div>
+        <div class="form-group">
+          <label>End Time</label>
+          <input type="datetime-local" id="tc-edit-end" style="width:100%">
+        </div>
+        <div class="form-group full">
+          <label>Description</label>
+          <input type="text" id="tc-edit-desc" placeholder="What were you working on?" style="width:100%">
+        </div>
+        <div class="form-group full">
+          <label>Tags <span class="tip">comma-separated</span></label>
+          <input type="text" id="tc-edit-tags" placeholder="invoicing, clients" style="width:100%">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('tc-edit-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSession()">💾 Save</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -102,6 +155,95 @@ if (container) {
     el.innerHTML = `<div class="kpi-label">${mo}</div><div class="kpi-value">${hrs.toFixed(1)}h</div>`;
     container.appendChild(el);
   });
+}
+
+
+function editSessionFromBtn(btn) {
+  editSession(
+    btn.dataset.id,
+    btn.dataset.start,
+    btn.dataset.end,
+    btn.dataset.minutes,
+    btn.dataset.desc,
+    btn.dataset.tags
+  );
+}
+
+function editSession(id, start, end, minutes, desc, tags) {
+  document.getElementById('tc-edit-id').value    = id;
+  document.getElementById('tc-edit-start').value = start;
+  document.getElementById('tc-edit-end').value   = end || '';
+  document.getElementById('tc-edit-desc').value  = desc || '';
+  document.getElementById('tc-edit-tags').value  = tags || '';
+  openModal('tc-edit-modal');
+}
+
+async function saveSession() {
+  const id    = document.getElementById('tc-edit-id').value;
+  const start = document.getElementById('tc-edit-start').value;
+  const end   = document.getElementById('tc-edit-end').value;
+  const desc  = document.getElementById('tc-edit-desc').value;
+  const tags  = document.getElementById('tc-edit-tags').value;
+  if (!start) { showToast('Start time required', 'error'); return; }
+
+  // Compute active minutes from start/end if both set
+  let active_minutes = null;
+  if (start && end) {
+    const ms = new Date(end) - new Date(start);
+    if (ms > 0) active_minutes = ms / 60000;
+  }
+
+  const r = await fetch(`/api/timeclock/session/${id}/edit`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({start_time: start, end_time: end, description: desc, tags, active_minutes})
+  });
+  const d = await r.json().catch(() => ({}));
+  if (d.success !== false) {
+    showToast('Session updated', 'success');
+    closeModal('tc-edit-modal');
+    setTimeout(() => location.reload(), 400);
+  } else {
+    showToast(d.error || 'Save failed', 'error');
+  }
+}
+
+async function deleteSession(id) {
+  const ok = await appConfirmDanger('Delete this time session? This cannot be undone.', 'Delete Session?', 'Delete', '🗑');
+  if (!ok) return;
+  const r = await fetch(`/api/timeclock/session/${id}/delete`, {method:'POST'});
+  const d = await r.json().catch(() => ({}));
+  if (d.success !== false) {
+    showToast('Session deleted', 'success');
+    const row = document.querySelector(`[data-session-id="${id}"]`);
+    if (row) row.remove();
+    else setTimeout(() => location.reload(), 400);
+  } else {
+    showToast(d.error || 'Delete failed', 'error');
+  }
+}
+
+async function toggleTimeClock(enabled) {
+  const lbl = document.getElementById('tc-status-lbl');
+  lbl.textContent = 'Saving…';
+  const fd = new FormData();
+  fd.append('time_tracker_enabled', enabled ? '1' : '0');
+  // Use the same API that settings uses — save via AJAX to /api/settings/patch
+  const r = await fetch('/api/settings/patch', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({time_tracker_enabled: enabled ? 1 : 0})
+  });
+  const d = await r.json().catch(() => ({}));
+  if (d.success !== false) {
+    lbl.textContent = enabled ? 'Enabled' : 'Disabled';
+    lbl.style.color = enabled ? 'var(--green)' : 'var(--text-dim)';
+    showToast('Time Clock ' + (enabled ? 'enabled' : 'disabled'), 'success');
+  } else {
+    showToast('Failed to save — check console', 'error');
+    lbl.textContent = enabled ? 'Disabled' : 'Enabled';  // revert label
+    document.getElementById('tc-toggle').checked = !enabled; // revert toggle
+  }
 }
 </script>
 {% endblock %}

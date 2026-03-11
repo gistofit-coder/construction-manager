@@ -1,34 +1,389 @@
 {% extends "base.html" %}
-
-{% block title %}Duplicate Ledger Entries{% endblock %}
-{% block topbar_title %}Duplicates{% endblock %}
+{% block title %}Duplicate Ledger Entries — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}Duplicate Entry Review{% endblock %}
+{% block breadcrumb %}
+  <a href="/">Home</a> / <a href="/ledger">Ledger</a> / Duplicates
+{% endblock %}
 
 {% block content %}
-<div class="card">
-  <div class="card-header">
-    <span class="card-title">Possible Duplicate Ledger Entries</span>
+<style>
+.dup-group{border:1px solid var(--border);border-radius:8px;margin-bottom:16px;overflow:hidden}
+.dup-group-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card-bg);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.dup-badge{padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700;text-transform:uppercase}
+.dup-badge.exact{background:rgba(239,68,68,.15);color:#ef4444;border:1px solid #ef4444}
+.dup-badge.near{background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid #f59e0b}
+.dup-badge.fuzzy{background:rgba(99,102,241,.15);color:#6366f1;border:1px solid #6366f1}
+.dup-entry-table{width:100%;border-collapse:collapse;font-size:11px}
+.dup-entry-table th{padding:5px 10px;background:var(--bg);color:var(--text-dim);font-weight:600;font-size:10px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+.dup-entry-table td{padding:5px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+.dup-entry-table tr:last-child td{border-bottom:none}
+.dup-entry-table tr.keep-row>td:first-child{border-left:3px solid var(--green,#22c55e)}
+.amt-income{color:var(--green,#22c55e);font-weight:600;font-family:monospace}
+.amt-expense{color:var(--red,#ef4444);font-weight:600;font-family:monospace}
+.group-actions{display:flex;gap:6px;padding:8px 14px;background:var(--bg);border-top:1px solid var(--border);flex-wrap:wrap;align-items:center}
+.editable-cell{cursor:pointer;border-radius:3px;padding:1px 3px;min-width:20px;display:inline-block}
+.editable-cell:hover{background:var(--accent-dim)}
+.editing-input{font-size:11px;padding:2px 4px;border-radius:3px;border:1px solid var(--accent);background:var(--input-bg,var(--bg));color:var(--text);width:100%;min-width:60px}
+</style>
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:13px;font-weight:600" id="summary-line">
+      {% if groups %}{{ groups|length }} group(s) · {{ total_extra }} removable entr{{ 'y' if total_extra==1 else 'ies' }}
+      {% else %}No duplicates found{% endif %}
+    </span>
+    {% if exact_count %}<span class="dup-badge exact" id="exact-badge">{{ exact_count }} exact</span>{% endif %}
+    {% if near_count %}<span class="dup-badge near" id="near-badge">{{ near_count }} near</span>{% endif %}
+
   </div>
-  <div class="card-body">
-    {% if duplicates %}
-      <table>
-        <thead><tr><th>Date</th><th>Vendor</th><th>Amount</th><th>Description</th><th>Actions</th></tr></thead>
-        <tbody>
-          {% for d in duplicates %}
-          <tr>
-            <td>{{ d.entry_date }}</td>
-            <td>{{ d.vendor or '—' }}</td>
-            <td>${{ '{:,.2f}'.format(d.amount|abs) }}</td>
-            <td>{{ d.description or '—' }}</td>
-            <td><a href="/ledger/{{ d.id }}" class="btn btn-xs btn-outline">View</a></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <div class="empty-state">
-        <p>No flagged duplicates at the moment.</p>
-      </div>
-    {% endif %}
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <button class="btn btn-sm btn-outline" onclick="autoDeleteExact()" id="btn-auto-exact">⚡ Auto-remove exact duplicates</button>
+    <button class="btn btn-sm btn-outline" id="btn-hide-near" onclick="toggleNear()"
+            title="Hide near/fuzzy matches — show only exact duplicates">👁 Hide near matches</button>
+    <button class="btn btn-sm btn-outline" onclick="reloadPage()" id="btn-refresh" title="Refresh to re-scan duplicates">↺ Refresh</button>
+    <a href="/ledger" class="btn btn-sm btn-outline">← Back to Ledger</a>
   </div>
 </div>
+
+{% if not groups %}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:40px">
+    <div style="font-size:40px;margin-bottom:12px">✓</div>
+    <p style="font-size:14px;color:var(--text-dim)">No duplicate entries found.</p>
+    <a href="/ledger" class="btn btn-outline" style="margin-top:12px">← Back to Ledger</a>
+  </div>
+</div>
+{% else %}
+<div id="groups-container">
+{% for g in groups %}
+{%- set gi = loop.index0 -%}
+<div class="dup-group" id="group-{{ gi }}" data-gi="{{ gi }}" data-match="{{ g.match_type }}">
+  <div class="dup-group-header">
+    <span class="dup-badge {{ g.match_type }}">{{ g.match_type }}</span>
+    {% if g.score < 1.0 %}<span style="font-size:10px;color:var(--text-dim)">{{ (g.score*100)|int }}% match</span>{% endif %}
+    <strong style="font-size:12px">{{ g.vendor }}</strong>
+    <span class="grp-count" style="font-size:11px;color:var(--text-dim)">{{ g.count }} entries</span>
+    <span style="flex:1"></span>
+    <span style="font-size:10px;color:var(--text-dim)">Group {{ gi + 1 }} / {{ groups|length }}</span>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="dup-entry-table">
+      <thead>
+        <tr>
+          <th style="width:24px"><input type="checkbox" title="Select all in group" onchange="groupSelectAll(this,{{ gi }})"></th>
+          <th>Date</th><th>Vendor</th><th>Income</th><th>Expense</th>
+          <th>Category</th><th>Description</th><th>Job</th><th>Invoice</th>
+          <th>Nickname</th><th>Trans Type</th><th>Memo</th><th>Status</th><th>Receipt</th><th>ID</th><th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="grp-body-{{ gi }}">
+      {% for e in g.entries %}
+      <tr id="entry-row-{{ e.id }}" class="{{ 'keep-row' if e.id == g.keep_id else '' }}"
+          data-id="{{ e.id }}" data-grp="{{ gi }}">
+        <td><input type="checkbox" class="entry-cb" data-id="{{ e.id }}" data-grp="{{ gi }}"></td>
+        <td style="white-space:nowrap">
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'entry_date','date')"
+                data-field="entry_date" data-val="{{ e.entry_date or '' }}">
+            {{ e.entry_date or '<em style="color:var(--text-dim)">pending</em>'|safe }}
+          </span>
+        </td>
+        <td>
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'vendor','text')"
+                data-field="vendor" data-val="{{ e.vendor or '' }}">{{ e.vendor or '—' }}</span>
+        </td>
+        <td class="amt-income" style="text-align:right;white-space:nowrap">
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'income','number')"
+                data-field="income" data-val="{{ e.income if e.income is not none else '' }}">
+            {%- if e.income is not none -%}
+              ${{ '%.2f'|format(e.income|abs) }}{% if e.income < 0 %} ↩{% endif %}
+            {%- elif e.expense is none and e.amount and e.amount > 0 -%}${{ '%.2f'|format(e.amount) }}
+            {%- else -%}—{%- endif -%}
+          </span>
+        </td>
+        <td class="amt-expense" style="text-align:right;white-space:nowrap">
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'expense','number')"
+                data-field="expense" data-val="{{ e.expense if e.expense is not none else '' }}">
+            {%- if e.expense is not none -%}
+              ${{ '%.2f'|format(e.expense|abs) }}{% if e.expense < 0 %} ↩{% endif %}
+            {%- elif e.income is none and e.amount and e.amount < 0 -%}${{ '%.2f'|format(e.amount|abs) }}
+            {%- else -%}—{%- endif -%}
+          </span>
+        </td>
+        <td>
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'category','text')"
+                data-field="category" data-val="{{ e.category or '' }}">{{ e.category or '—' }}</span>
+        </td>
+        <td style="max-width:140px">
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'description','text')"
+                data-field="description" data-val="{{ e.description or '' }}"
+                style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;display:block"
+                title="{{ e.description or '' }}">{{ e.description or '—' }}</span>
+        </td>
+        <td>
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'job_code','text')"
+                data-field="job_code" data-val="{{ e.job_code or '' }}">{{ e.job_code or '—' }}</span>
+        </td>
+        <td>
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'invoice_number','text')"
+                data-field="invoice_number" data-val="{{ e.invoice_number or '' }}">{{ e.invoice_number or '—' }}</span>
+        </td>
+        <td>
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'nickname','text')"
+                data-field="nickname" data-val="{{ e.nickname or '' }}">{{ e.nickname or '—' }}</span>
+        </td>
+        <td style="white-space:nowrap">
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'type_of_payment','text')"
+                data-field="type_of_payment" data-val="{{ e.type_of_payment or '' }}">{{ e.type_of_payment or '—' }}</span>
+        </td>
+        <td style="max-width:100px">
+          <span class="editable-cell" onclick="editCell(this,{{ e.id }},'memo','text')"
+                data-field="memo" data-val="{{ e.memo or '' }}"
+                style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px;display:block"
+                title="{{ e.memo or '' }}">{{ e.memo or '—' }}</span>
+        </td>
+        <td>{% if e.is_pending %}<span style="color:var(--orange,#f59e0b)">Pending</span>{% else %}{{ e.status or '—' }}{% endif %}</td>
+        <td style="text-align:center;white-space:nowrap">
+          {%- if e.receipt_filename -%}
+            <a href="/files/receipts/{{ e.receipt_filename }}" target="_blank"
+               style="text-decoration:none" title="{{ e.receipt_filename }}">✅</a>
+          {%- else -%}—{%- endif -%}
+        </td>
+        <td style="color:var(--text-dim);font-family:monospace;font-size:10px">{{ e.id }}</td>
+        <td style="white-space:nowrap">
+          {% if e.id == g.keep_id %}
+            <span style="color:var(--green,#22c55e);font-size:10px;font-weight:700">✓ KEEP</span>
+          {% else %}
+            <button class="btn btn-xs" style="border:1px solid var(--red,#ef4444);color:var(--red,#ef4444)"
+                    onclick="removeEntry({{ e.id }},{{ gi }})">Remove</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="group-actions">
+    <button class="btn btn-xs btn-outline"
+            onclick="keepOldest({{ gi }},{{ g.keep_id }},[{{ g.entries|map(attribute='id')|join(',') }}])">
+      Keep ID {{ g.keep_id }} · remove rest
+    </button>
+    <button class="btn btn-xs btn-outline" onclick="removeSelected({{ gi }})">Remove selected</button>
+    <button class="btn btn-xs btn-outline" onclick="differentiateGroup({{ gi }},[{{ g.entries|map(attribute='id')|join(',') }}])" title="Add notes to distinguish these entries so they stop matching">✏️ Add note to differentiate</button>
+    <span style="flex:1"></span>
+    <a href="/ledger?q={{ g.vendor|urlencode }}" target="_blank" class="btn btn-xs btn-outline">🔍 View in Ledger</a>
+  </div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+
+<div id="toast-container" style="position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px"></div>
+
+<script>
+// ── Toast ───────────────────────────────────────────────────────────────────
+function showToast(msg,type='success',dur=4000){
+  const c=document.getElementById('toast-container');
+  const t=document.createElement('div');
+  t.className='toast '+type; t.textContent=msg;
+  c.appendChild(t); setTimeout(()=>t.remove(),dur);
+}
+
+// ── Reload ──────────────────────────────────────────────────────────────────
+let _pendingReload=false;
+function scheduleReload(delay=1500){
+  if(_pendingReload) return;
+  _pendingReload=true;
+  setTimeout(()=>location.reload(),delay);
+}
+function reloadPage(){ location.reload(); }
+
+// ── Select all in group ─────────────────────────────────────────────────────
+function groupSelectAll(cb,gi){
+  document.querySelectorAll(`.entry-cb[data-grp="${gi}"]`).forEach(c=>c.checked=cb.checked);
+}
+
+// ── Remove single entry ─────────────────────────────────────────────────────
+async function removeEntry(id,gi,silent=false){
+  if(!silent && !await appConfirmDanger(`Remove entry #${id}?`, 'Remove Entry?', 'Remove', '🗑')) return false;
+  const r=await fetch(`/ledger/${id}/delete`,{method:'POST',headers:{'Content-Type':'application/json'}});
+  if(r.ok){
+    const row=document.getElementById(`entry-row-${id}`);
+    if(row){ row.style.opacity='.3'; row.style.textDecoration='line-through'; row.querySelectorAll('button,input').forEach(b=>b.disabled=true); }
+    return true;
+  }
+  if(!silent) showToast(`Failed to remove #${id}`,'error');
+  return false;
+}
+
+// ── Remove selected ─────────────────────────────────────────────────────────
+async function removeSelected(gi){
+  const checked=Array.from(document.querySelectorAll(`.entry-cb[data-grp="${gi}"]:checked`));
+  if(!checked.length){ showToast('No entries selected','error'); return; }
+  if(!await appConfirmDanger(
+    `Remove ${checked.length} selected entr${checked.length===1?'y':'ies'}? Soft-delete — recoverable via History.`,
+    'Remove Selected?', 'Remove All', '🗑'
+  )) return;
+  // Delete sequentially to avoid SQLite write-lock contention
+  const ids = checked.map(cb => parseInt(cb.dataset.id));
+  let n = 0;
+  for (const id of ids) {
+    try {
+      const r = await fetch(`/ledger/${id}/delete`, {method:'POST', headers:{'Content-Type':'application/json'}});
+      if (r.ok) {
+        n++;
+        const row = document.getElementById(`entry-row-${id}`);
+        if (row) { row.style.opacity='.3'; row.style.textDecoration='line-through'; row.querySelectorAll('button,input').forEach(b=>b.disabled=true); }
+      }
+    } catch(e) { /* skip failed */ }
+  }
+  showToast(`Removed ${n} of ${ids.length} entries`,'success');
+  scheduleReload();
+}
+
+// ── Keep oldest, remove rest ─────────────────────────────────────────────────
+async function keepOldest(gi,keepId,allIds){
+  const remove=allIds.filter(id=>id!==keepId);
+  if(!await appConfirmDanger(
+    `Keep entry #${keepId} and remove ${remove.length} duplicate(s)?`,
+    'Keep & Remove Duplicates?', 'Remove Duplicates', '🗑'
+  )) return;
+  let n = 0;
+  for (const id of remove) {
+    try {
+      const r = await fetch(`/ledger/${id}/delete`, {method:'POST', headers:{'Content-Type':'application/json'}});
+      if (r.ok) {
+        n++;
+        const row = document.getElementById(`entry-row-${id}`);
+        if (row) { row.style.opacity='.3'; row.style.textDecoration='line-through'; row.querySelectorAll('button,input').forEach(b=>b.disabled=true); }
+      }
+    } catch(e) { /* skip failed */ }
+  }
+  showToast(`Kept #${keepId}, removed ${n}`,'success');
+  scheduleReload();
+}
+
+// ── Differentiate group: prompt user to add notes instead of dismissing ──────
+function differentiateGroup(gi, allIds){
+  // Show a prompt explaining what to do
+  const note = window.prompt(
+    `These ${allIds.length} entries look identical.\n\nTo stop them from showing as duplicates, add a note to one or more entries to make them distinct.\n\nExample: add "invoice #1", "invoice #2", a date range, or a project name to the Memo field.\n\nType a note to apply to the FIRST entry now (or Cancel to edit memo cells manually in the table above):`,
+    ''
+  );
+  if(note === null) return; // cancelled
+  if(!note.trim()){
+    showToast('No note entered — click the Memo cell in the table to edit it directly.', 'error', 5000);
+    return;
+  }
+  // Apply note to first entry's memo
+  const firstId = allIds[0];
+  fetch(`/api/ledger/${firstId}/patch`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({field: 'memo', value: note.trim()})
+  }).then(r => r.json()).then(d => {
+    if(d.success !== false && !d.error){
+      showToast(`Note added to entry #${firstId} — re-scanning for duplicates…`, 'success', 3000);
+      scheduleReload(1500);
+    } else {
+      showToast('Failed to save note: ' + (d.error || 'unknown'), 'error');
+    }
+  }).catch(e => showToast('Error: ' + e.message, 'error'));
+}
+
+// ── Toggle near matches visibility ───────────────────────────────────────────
+let _nearHidden = false;
+function toggleNear(){
+  _nearHidden = !_nearHidden;
+  const btn = document.getElementById('btn-hide-near');
+  document.querySelectorAll('.dup-group[data-match="near"],.dup-group[data-match="fuzzy"]').forEach(el => {
+    el.style.display = _nearHidden ? 'none' : '';
+  });
+  btn.textContent = _nearHidden ? '👁 Show near matches' : '👁 Hide near matches';
+  btn.style.background = _nearHidden ? 'var(--accent-dim)' : '';
+  // Update summary count
+  const visible = document.querySelectorAll('.dup-group:not([style*="display: none"]):not([style*="display:none"])').length;
+  const total   = document.querySelectorAll('.dup-group').length;
+  if(_nearHidden && total !== visible){
+    showToast(`Showing ${visible} exact group(s). ${total - visible} near match group(s) hidden.`, 'success', 3000);
+  }
+}
+
+// ── Auto-delete exact ────────────────────────────────────────────────────────
+async function autoDeleteExact(){
+  if(!await appConfirmDanger('Auto-remove ALL exact duplicate entries? Keeps oldest in each group. Reversible via History.', 'Auto-Remove Exact Duplicates?', 'Remove All', '⚡')) return;
+  const btn=document.getElementById('btn-auto-exact');
+  btn.disabled=true; btn.textContent='Working…';
+  try{
+    const r=await fetch('/api/ledger/auto-dedupe-exact',{method:'POST',headers:{'Content-Type':'application/json'}});
+    const d=await r.json();
+    if(d.success){
+      showToast(d.message||'Done','success',4000);
+      scheduleReload(1500);
+    }else{ showToast(d.error||'Failed','error'); btn.disabled=false; btn.textContent='⚡ Auto-remove exact duplicates'; }
+  }catch(e){ showToast('Error: '+e.message,'error'); btn.disabled=false; btn.textContent='⚡ Auto-remove exact duplicates'; }
+}
+
+// ── Inline cell edit ─────────────────────────────────────────────────────────
+function editCell(span,rowId,field,inputType){
+  if(span.querySelector('input')) return; // already editing
+  const prev = span.dataset.val;
+  const prevDisplay = span.innerHTML;
+
+  const inp = document.createElement('input');
+  inp.type = inputType === 'number' ? 'text' : inputType;
+  inp.className = 'editing-input';
+  inp.value = prev;
+  inp.style.width = Math.max(60, span.offsetWidth) + 'px';
+
+  span.innerHTML='';
+  span.appendChild(inp);
+  inp.focus();
+  inp.select();
+
+  async function save(){
+    const newVal = inp.value.trim();
+    if(newVal === prev){
+      span.innerHTML = prevDisplay;
+      return;
+    }
+    span.innerHTML = '<span style="opacity:.5">saving…</span>';
+    try{
+      const sendVal = (newVal === '' || newVal === '—') ? null : newVal;
+      const r = await fetch(`/api/ledger/${rowId}/patch`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({field, value: sendVal})
+      });
+      const d = await r.json();
+      if(d.success !== false && !d.error){
+        // Update display
+        span.dataset.val = newVal;
+        let display = newVal || '—';
+        if(field === 'income' || field === 'expense'){
+          const v = parseFloat(newVal);
+          if(!isNaN(v)){
+            display = '$'+Math.abs(v).toFixed(2) + (v<0?' ↩':'');
+          }
+        }
+        span.textContent = display;
+        showToast(`Updated ${field}`, 'success', 2000);
+        // After editing, rescan for duplicates
+        scheduleReload(2000);
+      }else{
+        showToast('Save failed: '+(d.error||'unknown'), 'error');
+        span.innerHTML = prevDisplay;
+      }
+    }catch(e){
+      showToast('Error: '+e.message, 'error');
+      span.innerHTML = prevDisplay;
+    }
+  }
+
+  inp.addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); save(); }
+    if(e.key === 'Escape'){ span.innerHTML = prevDisplay; }
+  });
+  inp.addEventListener('blur', save);
+}
+</script>
 {% endblock %}

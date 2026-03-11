@@ -78,6 +78,7 @@
         <button class="btn btn-outline btn-sm" onclick="verifyAllCerts(this)">🔍 Verify Files</button>
         <a href="/certs/export" class="btn btn-outline btn-sm">⬇ CSV</a>
         <button class="btn btn-outline btn-sm" onclick="scanPdfs()" title="Auto-match PDFs in certs folder to certificate records">🔍 Scan PDFs</button>
+        <button class="btn btn-outline btn-sm" onclick="openCertsFolder()" title="Open the COI folder in your file explorer to add or remove PDFs">📁 Open COI Folder</button>
         <a href="/certs/new" class="btn btn-primary btn-sm">+ Add Certificate</a>
       </div>
     </form>
@@ -97,7 +98,7 @@
           <th style="text-align:center;width:110px">Expiration</th>
           <th style="text-align:center;width:110px">Status</th>
           <th style="text-align:center;width:80px">Days Left</th>
-          <th>PDF / Notes</th>
+          <th data-nosort="true">PDF / Notes</th>
           <th style="width:140px" data-nosort="true">Actions</th>
         </tr>
       </thead>
@@ -112,12 +113,13 @@
           </td>
           <td class="text-dim" style="font-size:11px">{{ c.trade_type or '—' }}</td>
           <td style="font-size:12px">{{ c.cert_type }}</td>
-          <td style="text-align:center" class="mono text-dim">{{ c.start_date or '—' }}</td>
+          <td style="text-align:center" class="mono text-dim" data-sort="{{ c.start_date or '0000-00-00' }}">{{ c.start_date or '—' }}</td>
           <td style="text-align:center" class="mono
-               {% if c.status == 'Expired' %}text-red{% elif c.status == 'Expiring Soon' %}text-yellow{% else %}text-dim{% endif %}">
+               {% if c.status == 'Expired' %}text-red{% elif c.status == 'Expiring Soon' %}text-yellow{% else %}text-dim{% endif %}"
+               data-sort="{{ c.end_date or '9999-99-99' }}">
             {{ c.end_date or '—' }}
           </td>
-          <td style="text-align:center">
+          <td style="text-align:center" data-sort="{%- if c.status == 'Active' -%}0{%- elif c.status == 'Expiring Soon' -%}1{%- elif c.status == 'Expired' -%}2{%- else -%}3{%- endif -%}">
             {% if c.status == 'Archived' %}
               <span class="badge badge-gray" title="Expired more than 1 year ago — kept for audit">Archived</span>
             {% elif c.status == 'Expired' %}
@@ -131,7 +133,8 @@
             {% endif %}
           </td>
           <td style="text-align:center;font-weight:600"
-              class="{% if c.days_left is not none and c.days_left < 0 %}text-red{% elif c.days_left is not none and c.days_left <= 60 %}text-yellow{% else %}text-dim{% endif %}">
+              class="{% if c.days_left is not none and c.days_left < 0 %}text-red{% elif c.days_left is not none and c.days_left <= 60 %}text-yellow{% else %}text-dim{% endif %}"
+              data-sort="{{ c.days_left if c.days_left is not none else 999999 }}">
             {% if c.days_left is not none %}
               {% if c.days_left < 0 %}{{ c.days_left|abs }}d ago{% else %}{{ c.days_left }}d{% endif %}
             {% else %}—{% endif %}
@@ -161,7 +164,6 @@
             <div class="flex gap-8">
               <button class="btn btn-outline btn-xs" onclick="openRenewModal({{ c.id }}, '{{ c.end_date or '' }}', '{{ c.cert_type }}')" title="Renew / update expiration">♻️ Renew</button>
               <a href="/certs/{{ c.id }}/edit" class="btn btn-outline btn-xs">✏️</a>
-              <button class="btn btn-danger btn-xs" onclick="deleteCert({{ c.id }})">🗑</button>
             </div>
           </td>
         </tr>
@@ -285,15 +287,21 @@ async function submitRenew() {
   }
 }
 
-async function deleteCert(id) {
-  if (!confirm('Delete this certificate? This cannot be undone easily.')) return;
-  const r = await fetch(`/api/certs/${id}/delete`, {method: 'POST'});
-  const d = await r.json();
-  if (d.success) {
-    document.getElementById(`cert-row-${id}`)?.remove();
-    showToast('Certificate deleted.', 'success');
-  } else {
-    showToast(d.error || 'Delete failed', 'error');
+async function openCertsFolder() {
+  try {
+    const r = await fetch('/api/open-folder', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: '{{ config.certs_folder_path or "" }}'})
+    });
+    const d = await r.json();
+    if (d.success) {
+      showToast('Opened COI folder in file explorer', 'success');
+    } else {
+      showToast(d.error || 'Could not open folder — check COI folder path in Settings.', 'error');
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message, 'error');
   }
 }
 

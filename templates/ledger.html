@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Ledger — {{ config.company_name or 'Construction Manager' }}{% endblock %}
-{% block topbar_title %} Ledger{% endblock %}
+{% block topbar_title %}📒 Ledger{% endblock %}
 
 {% block content %}
 <style>
@@ -23,9 +23,55 @@
   /* Keep your sidebar offset */
   padding-right: calc(var(--sidebar-w, 250px) + 200px);
 }
+#ledger-table {
+  /* No table-layout:fixed — prevents reflow when expand row shown/hidden */
+}
+/* Entry detail modal */
+#entry-detail-modal {
+  display:none; position:fixed; inset:0; z-index:1000;
+  background:rgba(0,0,0,.55); align-items:center; justify-content:center;
+}
+#entry-detail-modal.open { display:flex; }
+#entry-detail-box {
+  background:var(--card-bg); border:1px solid var(--border);
+  border-radius:10px; padding:20px 24px; width:min(620px,95vw);
+  max-height:85vh; overflow-y:auto;
+  box-shadow:0 8px 40px rgba(0,0,0,.6);
+  position:relative;
+}
+#entry-detail-box h3 { margin:0 0 14px; font-size:14px; font-weight:700; }
+.edm-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:12px; font-size:12px; }
+.edm-field .label { font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.4px; margin-bottom:3px; }
+#entry-detail-close {
+  position:absolute; top:12px; right:14px;
+  background:none; border:none; font-size:18px; cursor:pointer;
+  color:var(--text-dim); line-height:1;
+}
+#entry-detail-close:hover { color:var(--text); }
 #ledger-table thead th {
   position: sticky; top: 0px; background: var(--surface);
   z-index: 5; box-shadow: 0 1px 0 var(--border); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  user-select: none;
+  position: sticky;
+}
+.col-resize-handle {
+  position: absolute; right: 0; top: 0; bottom: 0;
+  width: 6px; cursor: col-resize; z-index: 10;
+  background: transparent;
+}
+.col-resize-handle:hover, .col-resize-handle.resizing {
+  background: var(--accent, #6366f1);
+  opacity: 0.5;
+}
+#ledger-table th { position: relative; }
+#ledger-table td {
+  overflow: hidden; text-overflow: ellipsis;
+  padding: 3px 6px;          /* explicit — don't rely on base.html td rule */
+  vertical-align: middle;
+}
+#ledger-table thead th {
+  padding: 4px 6px;
 }
 #col-panel {
   display: none; position: fixed; top: 54px; right: 12px; z-index: 300;
@@ -163,9 +209,10 @@ tr.dup-dismissed { opacity: .7; }
       <div id="filter-chips" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center"></div>
 
       <!-- Pending filter -->
-      <a href="{{ request.path }}?status=Pending" id="btn-pending-filter"
-         class="btn btn-xs {% if request.args.get('status')=='Pending' %}btn-primary{% else %}btn-outline{% endif %}"
-         title="Show only pending transactions">⏳ Pending</a>
+      <button type="button" id="btn-pending-filter"
+        class="btn btn-xs {% if request.args.get('show_pending')=='1' %}btn-primary{% else %}btn-outline{% endif %}"
+        onclick="togglePendingFilter()"
+        title="Toggle visibility of pending transactions">⏳ Pending</button>
 
       <!-- Clear All -->
       <a href="/ledger" id="clear-all-btn"
@@ -182,7 +229,7 @@ tr.dup-dismissed { opacity: .7; }
         <button type="button" class="btn btn-outline btn-sm" onclick="openModal('modal-import')">⬆ Import</button>
         <a href="/ledger/export" class="btn btn-outline btn-sm" id="export-btn">⬇ Export</a>
         <button type="button" class="btn btn-outline btn-sm" onclick="reverifyAll()" title="Re-scan receipts folder and update verification status">Re-verify</button>
-        <a href="/ledger/duplicates" class="btn btn-outline btn-sm">Duplicates</a>
+        <a href="/ledger/duplicates" class="btn btn-outline btn-sm" title="Find and review duplicate entries">🔍 Duplicates</a>
 	<button type="button" class="btn btn-outline btn-sm" onclick="toggleColPanel()" title="Edit Columns">Columns</button>
       </div>
     </div>
@@ -236,13 +283,17 @@ tr.dup-dismissed { opacity: .7; }
   </div>
 </div>
 
+<!-- Duplicates Modal -->
+<!-- Duplicate review: /ledger/duplicates -->
+
+
 <!-- Visible Totals Bar -->
 {% if rows %}
-<div class="table-totals-bar">
-  <span style="color:var(--text-dim);font-size:10px">{{ rows|length }} shown / {{ total }} total:</span>
-  <span class="amt-income">▲ ${{ '{:,.2f}'.format(totals.total_income or 0) }}</span>
-  <span class="amt-expense">▼ ${{ '{:,.2f}'.format((totals.total_expense or 0)|abs) }}</span>
-  <span style="font-weight:600;color:{% if (totals.net or 0) >= 0 %}var(--green,#22c55e){% else %}var(--red,#ef4444){% endif %}">
+<div class="table-totals-bar" id="ledger-totals-bar">
+  <span id="totals-count" style="color:var(--text-dim);font-size:10px">{{ rows|length }} shown / {{ total }} total:</span>
+  <span class="amt-income" id="totals-income">▲ ${{ '{:,.2f}'.format(totals.total_income or 0) }}</span>
+  <span class="amt-expense" id="totals-expense">▼ ${{ '{:,.2f}'.format((totals.total_expense or 0)|abs) }}</span>
+  <span id="totals-net" style="font-weight:600;color:{% if (totals.net or 0) >= 0 %}var(--green,#22c55e){% else %}var(--red,#ef4444){% endif %}">
     Net ${{ '{:,.2f}'.format(totals.net or 0) }}
   </span>
 </div>
@@ -251,7 +302,7 @@ tr.dup-dismissed { opacity: .7; }
 <!-- Ledger Table -->
 <div class="card" style="margin-top:0;flex:1;display:flex;flex-direction:column;min-height:400px">
   <div class="card-body no-pad" style="padding:0;flex:1;display:flex;flex-direction:column">
-    <div style="flex:1;overflow-y:auto;overflow-x:auto;position:relative;min-height:200px">
+    <div style="flex:1;overflow-y:auto;overflow-x:auto;position:relative;min-height:200px" id="ledger-table-wrap">
       <table id="ledger-table" style="width:100%;border-collapse:collapse">
         <thead>
           <tr id="ledger-thead-row">
@@ -281,12 +332,14 @@ tr.dup-dismissed { opacity: .7; }
               <div id="ar-coi-warn" style="font-size:10px;margin-top:2px"></div>
             </td>
             <td class="col-cell" data-col="income" style="text-align:right">
-              <input type="number" id="ar-income" placeholder="0.00" step="0.01" min="0"
-                     style="width:80px;text-align:right" oninput="if(this.value) document.getElementById('ar-expense').value=''">
+              <input type="number" id="ar-income" placeholder="0.00" step="0.01"
+                     oninput="if(this.value.trim()!=='') { document.getElementById('ar-expense').value=''; }"
+                     style="width:80px;text-align:right" >
             </td>
             <td class="col-cell" data-col="expense" style="text-align:right">
-              <input type="number" id="ar-expense" placeholder="0.00" step="0.01" min="0"
-                     style="width:80px;text-align:right" oninput="if(this.value) document.getElementById('ar-income').value=''">
+              <input type="number" id="ar-expense" placeholder="0.00" step="0.01"
+                     oninput="if(this.value.trim()!=='') { document.getElementById('ar-income').value=''; }"
+                     style="width:80px;text-align:right" >
             </td>
             <td class="col-cell" data-col="type_of_payment">
               <select id="ar-payment" style="width:90px">
@@ -297,8 +350,6 @@ tr.dup-dismissed { opacity: .7; }
             </td>
             <td class="col-cell" data-col="memo"><input type="text" id="ar-memo" placeholder="Memo…" style="width:90px"></td>
             <td class="col-cell" data-col="receipt"></td>
-            <td class="col-cell" data-col="receipt_verified"></td>
-            <td class="col-cell" data-col="coi_verified"></td>
             <td colspan="2" style="white-space:nowrap;padding:4px">
               <button class="btn btn-primary btn-xs" onclick="submitAddRow()">✓ Save</button>
               <button class="btn btn-outline btn-xs" onclick="cancelAddRow()">✕</button>
@@ -307,8 +358,10 @@ tr.dup-dismissed { opacity: .7; }
 
           {% for row in rows %}
           <tr id="row-{{ row.id }}"
-              class="ledger-row{% if row.duplicate_flag=='flagged' %} dup-flagged{% elif row.duplicate_flag=='dismissed' %} dup-dismissed{% endif %}{% if row.is_transfer %} is-transfer{% endif %}{% if row.is_pending or (row.status == 'Pending' and row.entry_date == today) %} is-pending{% endif %}"
+              class="ledger-row{% if row.duplicate_flag=='flagged' %} dup-flagged{% elif row.duplicate_flag=='dismissed' %} dup-dismissed{% endif %}{% if row.is_transfer %} is-transfer{% endif %}{% if not row.entry_date or row.entry_date > today %} is-pending{% endif %}"
               data-id="{{ row.id }}" data-amount="{{ row.amount }}"
+              data-income="{{ row.income if row.income is not none else '' }}"
+              data-expense="{{ row.expense if row.expense is not none else '' }}"
               data-vendor="{{ row.vendor|e }}" data-date="{{ row.entry_date }}"
               data-cat="{{ row.category|e }}" data-job="{{ row.job_code|e }}"
               data-dup="{{ row.duplicate_flag }}">
@@ -319,10 +372,12 @@ tr.dup-dismissed { opacity: .7; }
             </td>
 
             <td class="col-cell" data-col="date">
-              {% set show_pending = row.is_pending or (row.status == 'Pending' and row.entry_date == today) %}
-              {% if show_pending %}
+              {%- set is_pending = (not row.entry_date) or (row.entry_date > today) -%}
+              {% if is_pending %}
                 <span class="editable pending-date" data-field="entry_date" data-id="{{ row.id }}"
-                      data-type="date" title="Click to set a real date and clear pending status">⏳ Pending</span>
+                      data-type="date" title="Click to set a real date">
+                  ⏳ {% if row.entry_date %}{{ row.entry_date }}{% else %}Pending{% endif %}
+                </span>
               {% else %}
                 <span class="editable mono" data-field="entry_date" data-id="{{ row.id }}"
                       data-type="date">{{ row.entry_date }}</span>
@@ -357,7 +412,7 @@ tr.dup-dismissed { opacity: .7; }
                     data-type="select" data-options="{{ categories|join('|') }}">
                 {% if row.category %}
                   <span class="badge badge-gray" style="font-size:10px">{{ row.category }}</span>
-                  {% if row.is_transfer %}<span class="transfer-badge" title="Account transfer / equity — excluded from P&amp;L totals">XFER</span>{% endif %}
+                  {# XFER badge moved to trans-type column #}
                 {% else %}<span class="text-dim" style="font-size:11px">—</span>{% endif %}
               </span>
             </td>
@@ -376,23 +431,52 @@ tr.dup-dismissed { opacity: .7; }
               <span class="coi-badge" id="coi-{{ row.id }}" style="display:none;font-size:9px;margin-top:1px;display:block"></span>
             </td>
 
-            <!-- Income: positive amount = green; row with negative amount shows — here -->
+            <!-- Income column -->
             <td class="col-cell" data-col="income" style="text-align:right">
-              {% if row.amount > 0 %}
-                <span class="editable amt-income" data-field="amount" data-id="{{ row.id }}"
-                      data-type="amount-income">${{ '{:,.2f}'.format(row.amount) }}</span>
+              {% if row.income is not none %}
+                {#
+                  Positive income  = normal income    → green
+                  Negative income  = returned income  → red ↩ (rare)
+                #}
+                {%- set inc_cls = "amt-income" if row.income >= 0 else "amt-expense" -%}
+                <span class="editable {{ inc_cls }}" data-field="income" data-id="{{ row.id }}"
+                      data-type="field-income"
+                      title="{% if row.income < 0 %}Returned/reversed income{% endif %}"
+                      >${{ '{:,.2f}'.format(row.income|abs) }}{% if row.income < 0 %} <small style="font-size:9px;opacity:.7" title="Returned income">↩</small>{% endif %}</span>
+                {# Show indicator if expense is ALSO populated (data integrity flag) #}
+                {% if row.expense is not none %}
+                  <span title="⚠ Both income (${{ '{:,.2f}'.format(row.income|abs) }}) AND expense (${{ '{:,.2f}'.format(row.expense|abs) }}) are set on this row" style="font-size:9px;color:#f59e0b;cursor:help">⚠</span>
+                {% endif %}
+              {% elif row.expense is none and row.amount and row.amount > 0 %}
+                {# Fallback: no income/expense columns set, amount is positive #}
+                <span class="editable amt-income" data-field="income" data-id="{{ row.id }}"
+                      data-type="field-income">${{ '{:,.2f}'.format(row.amount) }}</span>
               {% else %}<span class="amt-dim">—</span>{% endif %}
             </td>
 
-            <!-- Expense: negative amount = red (shown as absolute); positive shows — here -->
+            <!-- Expense column -->
             <td class="col-cell" data-col="expense" style="text-align:right">
-              {% if row.amount < 0 %}
-                <span class="editable amt-expense" data-field="amount" data-id="{{ row.id }}"
-                      data-type="amount-expense">${{ '{:,.2f}'.format(row.amount|abs) }}</span>
+              {% if row.expense is not none %}
+                {#
+                  Positive expense = normal expense   → red
+                  Negative expense = refund / return  → green ↩  (money came back)
+                  This is the KEY distinction: a refund lives in the EXPENSE column
+                  as a negative number, NOT moved to the income column.
+                #}
+                {%- set exp_cls = "amt-expense" if row.expense >= 0 else "amt-income" -%}
+                <span class="editable {{ exp_cls }}" data-field="expense" data-id="{{ row.id }}"
+                      data-type="field-expense"
+                      title="{% if row.expense < 0 %}Refund / return (negative expense){% else %}Expense{% endif %}"
+                      >${{ '{:,.2f}'.format(row.expense|abs) }}{% if row.expense < 0 %} <small style="font-size:9px;opacity:.7" title="Refund/return — money came back">↩</small>{% endif %}</span>
+              {% elif row.income is none and row.amount and row.amount < 0 %}
+                {# Fallback: no income/expense columns set, amount is negative = expense #}
+                <span class="editable amt-expense" data-field="expense" data-id="{{ row.id }}"
+                      data-type="field-expense">${{ '{:,.2f}'.format(row.amount|abs) }}</span>
               {% else %}<span class="amt-dim">—</span>{% endif %}
             </td>
 
-            <td class="col-cell" data-col="type_of_payment">
+            <td class="col-cell" data-col="type_of_payment" style="white-space:nowrap">
+              {% if row.is_transfer %}<span class="transfer-badge" title="Account transfer / equity — excluded from P&amp;L totals" style="margin-right:4px">XFER</span>{% endif %}
               <span class="editable dim" data-field="type_of_payment" data-id="{{ row.id }}"
                     data-type="select" data-options="Check|ACH|Credit Card|Cash|Wire|Zelle|Other"
                     style="font-size:10px">{{ row.type_of_payment or '—' }}</span>
@@ -415,7 +499,7 @@ tr.dup-dismissed { opacity: .7; }
                   <button class="btn btn-xs btn-outline" onclick="openReceiptAssign({{ row.id }})"
                           title="Assign receipt file">📎</button>
                 {% endif %}
-              {% elif row.receipt_verified %}
+              {% elif rf %}
                 <span class="receipt-cell" title="{{ rf }}">
                   <a href="/files/receipts/{{ rf }}" target="_blank" style="text-decoration:none">✅</a>
                   <button class="rcpt-action-btn" onclick="openReceiptAssign({{ row.id }},'{{ rf }}')" title="Rename / reassign">✏️</button>
@@ -432,21 +516,8 @@ tr.dup-dismissed { opacity: .7; }
             </td>
 
             <!-- Receipt Verified -->
-            <td class="col-cell" data-col="receipt_verified" style="text-align:center">
-              <span class="editable" data-field="receipt_verified" data-id="{{ row.id }}"
-                    data-type="select" data-options="0|1" style="cursor:pointer;font-size:13px">
-                {{ '✅' if row.receipt_verified else '—' }}
-              </span>
-            </td>
 
             <!-- COI Verified -->
-            <td class="col-cell" data-col="coi_verified" style="text-align:center">
-              <span class="editable" data-field="coi_verified" data-id="{{ row.id }}"
-                    data-type="select" data-options="0|1" style="cursor:pointer;font-size:13px"
-                    title="{{ 'COI verified — click to unmark' if row.coi_verified else 'Not verified — click to mark' }}">
-                {{ '🛡️' if row.coi_verified else '—' }}
-              </span>
-            </td>
 
             <!-- Actions -->
             <td style="white-space:nowrap;padding:2px 6px">
@@ -455,42 +526,6 @@ tr.dup-dismissed { opacity: .7; }
             </td>
           </tr>
 
-          <!-- Expand detail -->
-          <tr id="expand-{{ row.id }}" style="display:none">
-            <td colspan="20" style="padding:10px 20px;background:var(--surface)">
-              <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;font-size:11px">
-                <div><div class="text-dim">Invoice #</div>
-                  <span class="editable" data-field="invoice_number" data-id="{{ row.id }}">{{ row.invoice_number or '—' }}</span></div>
-                <div><div class="text-dim">Bank Account</div>
-                  <span class="editable" data-field="bank_account_id" data-id="{{ row.id }}"
-                        data-type="select"
-                        data-options="{{ bank_accounts|map(attribute='id')|join('|') }}"
-                        data-labels="{{ bank_accounts|map(attribute='account_name')|join('|') }}">
-                    {{ row.account_name or '—' }}</span></div>
-                <div><div class="text-dim">Status</div>
-                  <span class="editable" data-field="status" data-id="{{ row.id }}"
-                        data-type="select" data-options="Pending|Cleared|Reconciled">
-                    <span class="badge badge-{% if row.status in ('Cleared','Reconciled') %}green{% else %}gray{% endif %}" style="font-size:10px">{{ row.status }}</span>
-                  </span></div>
-                <div><div class="text-dim">Receipt File</div>
-                  <span class="editable mono" data-field="receipt_filename" data-id="{{ row.id }}" style="font-size:10px">{{ row.receipt_filename or '—' }}</span></div>
-                <div><div class="text-dim">Notes</div>
-                  <span class="editable" data-field="notes" data-id="{{ row.id }}">{{ row.notes or '—' }}</span></div>
-                <div><div class="text-dim">COGS</div>
-                  <span>{{ '✓' if row.is_cogs else '—' }}</span></div>
-                <div><div class="text-dim">Dup. Flag</div>
-                  {% if row.duplicate_flag == 'flagged' %}
-                    <span style="color:var(--orange,#f59e0b)">⚠️ Flagged</span>
-                    <button class="btn btn-xs btn-outline" onclick="dismissDuplicate({{ row.id }})">Dismiss</button>
-                    <a href="/ledger/duplicates" class="btn btn-xs btn-outline" title="Go to Duplicates page">View</a>
-                  {% elif row.duplicate_flag == 'dismissed' %}
-                    <span style="color:var(--text-dim)">✓ Dismissed</span>
-                    <button class="btn btn-xs btn-outline" onclick="restoreDuplicate({{ row.id }})" title="Restore — re-include in duplicate detection">Restore</button>
-                  {% else %}<span class="text-dim">—</span>{% endif %}
-                </div>
-                <div><div class="text-dim">Row ID</div><span class="mono text-dim">#{{ row.id }}</span></div>
-              </div>
-            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -498,13 +533,39 @@ tr.dup-dismissed { opacity: .7; }
     </div>
 
     {% if pages > 1 %}
-    <div class="flex gap-8" style="padding:8px 14px;justify-content:center;border-top:1px solid var(--border)">
+    <div class="flex gap-8" style="padding:8px 14px;justify-content:center;align-items:center;border-top:1px solid var(--border);flex-wrap:wrap">
+      {# Build base query string without page= param #}
+      {% set qs = request.query_string.decode() %}
+      {%- set ns = namespace(parts=[]) -%}
+      {%- for k, v in request.args.items() -%}
+        {%- if k != "page" -%}{%- set ns.parts = ns.parts + [k+"="+v] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set qs_no_page = ns.parts|join("&") -%}
+      {# First #}
       {% if page > 1 %}
-        <a href="?page={{ page-1 }}&{{ request.query_string.decode()|replace('page='+page|string,'') }}" class="btn btn-outline btn-sm">← Prev</a>
+        <a href="?page=1&{{ qs_no_page }}" class="btn btn-outline btn-sm" title="First page">«</a>
+        <a href="?page={{ page-1 }}&{{ qs_no_page }}" class="btn btn-outline btn-sm">← Prev</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">«</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">← Prev</span>
       {% endif %}
-      <span class="text-dim" style="align-self:center">Page {{ page }} / {{ pages }}</span>
+      {# Page jump input #}
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)">
+        Page
+        <input type="number" id="page-jump-input" min="1" max="{{ pages }}" value="{{ page }}"
+               style="width:48px;text-align:center;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:11px"
+               onkeydown="if(event.key==='Enter'){var p=Math.max(1,Math.min({{ pages }},parseInt(this.value)||1)); window.location='?page='+p+'&{{ qs_no_page }}';}">
+        / {{ pages }}
+        <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:10px"
+                onclick="var p=Math.max(1,Math.min({{ pages }},parseInt(document.getElementById('page-jump-input').value)||1)); window.location='?page='+p+'&{{ qs_no_page }}'; ">Go</button>
+      </span>
+      {# Next / Last #}
       {% if page < pages %}
-        <a href="?page={{ page+1 }}&{{ request.query_string.decode()|replace('page='+page|string,'') }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ page+1 }}&{{ qs_no_page }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ pages }}&{{ qs_no_page }}" class="btn btn-outline btn-sm" title="Last page">»</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">Next →</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">»</span>
       {% endif %}
     </div>
     {% elif not rows %}
@@ -693,23 +754,7 @@ tr.dup-dismissed { opacity: .7; }
           <input type="text" id="bulk-notes" placeholder="— keep existing —">
         </div>
 
-        <div class="form-group">
-          <label>Receipt Verified</label>
-          <select id="bulk-rcpt-verified">
-            <option value="">— keep existing —</option>
-            <option value="1">✅ Mark Verified</option>
-            <option value="0">— Mark Unverified</option>
-          </select>
-        </div>
 
-        <div class="form-group">
-          <label>COI Verified</label>
-          <select id="bulk-coi">
-            <option value="">— keep existing —</option>
-            <option value="1">🛡️ Mark Verified</option>
-            <option value="0">— Mark Unverified</option>
-          </select>
-        </div>
 
         <div class="form-group full">
           <!-- Progress feedback -->
@@ -737,33 +782,105 @@ tr.dup-dismissed { opacity: .7; }
 //  COLUMN DEFINITIONS  (localStorage-persisted)
 // ══════════════════════════════════════════
 const COL_DEFAULT = [
-  {key:'date',            label:'Date',          vis:true},
-  {key:'nickname',        label:'Nickname',       vis:true},
-  {key:'job_code',        label:'Job Code',       vis:true},
-  {key:'invoice_number',  label:'Invoice #',      vis:true},
-  {key:'category',        label:'Category',       vis:true},
-  {key:'description',     label:'Description',    vis:true},
-  {key:'vendor',          label:'Vendor/Sub',     vis:true},
-  {key:'income',          label:'Income',         vis:true},
-  {key:'expense',         label:'Expense',        vis:true},
-  {key:'type_of_payment', label:'Trans. Type',    vis:true},
-  {key:'memo',            label:'Memo',           vis:true},
-  {key:'receipt',         label:'Receipt',        vis:true},
-  {key:'receipt_verified',label:'Rcpt Verified',  vis:true},
-  {key:'coi_verified',    label:'COI Verified',   vis:true},
+  {key:'date',            label:'Date',          vis:true,  w:90},
+  {key:'nickname',        label:'Nickname',       vis:true,  w:100},
+  {key:'job_code',        label:'Job Code',       vis:true,  w:80},
+  {key:'invoice_number',  label:'Invoice #',      vis:true,  w:76},
+  {key:'category',        label:'Category',       vis:true,  w:100},
+  {key:'description',     label:'Description',    vis:true,  w:200},
+  {key:'vendor',          label:'Vendor/Sub',     vis:true,  w:120},
+  {key:'income',          label:'Income',         vis:true,  w:84},
+  {key:'expense',         label:'Expense',        vis:true,  w:84},
+  {key:'type_of_payment', label:'Trans. Type',    vis:true,  w:86},
+  {key:'memo',            label:'Memo',           vis:true,  w:180},
+  {key:'receipt',         label:'Receipt',        vis:true,  w:60},
 ];
-const LS_COLS = 'kbweb_ledger_cols_v2';
+const LS_COLS = 'kbweb_ledger_cols_v4';
 
 function loadCols(){
   try{
     const s=JSON.parse(localStorage.getItem(LS_COLS));
-    // validate same keys
-    if(s && s.length===COL_DEFAULT.length) return s;
+    if(s && s.length===COL_DEFAULT.length){
+      // Migrate: add w from COL_DEFAULT if missing
+      s.forEach((col,i)=>{ if(col.w===undefined) col.w=COL_DEFAULT[i].w; });
+      return s;
+    }
   }catch(e){}
   return JSON.parse(JSON.stringify(COL_DEFAULT));
 }
 function saveCols(c){ localStorage.setItem(LS_COLS,JSON.stringify(c)); }
 function resetCols(){ saveCols(JSON.parse(JSON.stringify(COL_DEFAULT))); renderColPanel(); applyColVisibility(); }
+
+// ── Switch income ↔ expense ───────────────────────────────
+async function moveToIncome(rowId) {
+  const tr = document.getElementById('row-' + rowId);
+  if (!tr) return;
+  // Get current expense value
+  const expVal = tr.dataset.expense !== '' && tr.dataset.expense !== undefined
+    ? parseFloat(tr.dataset.expense) : null;
+  if (expVal === null) { showToast('No expense value to move', 'error'); return; }
+  // Set income = expense value, clear expense
+  const r1 = await fetch(`/api/ledger/${rowId}/patch`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({field:'income', value: expVal})
+  });
+  if (!r1.ok) { showToast('Failed to set income', 'error'); return; }
+  await fetch(`/api/ledger/${rowId}/patch`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({field:'expense', value: null})
+  });
+  showToast('Moved to Income', 'success');
+  setTimeout(()=>location.reload(), 400);
+}
+
+async function moveToExpense(rowId) {
+  const tr = document.getElementById('row-' + rowId);
+  if (!tr) return;
+  const incVal = tr.dataset.income !== '' && tr.dataset.income !== undefined
+    ? parseFloat(tr.dataset.income) : null;
+  if (incVal === null) { showToast('No income value to move', 'error'); return; }
+  const r1 = await fetch(`/api/ledger/${rowId}/patch`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({field:'expense', value: incVal})
+  });
+  if (!r1.ok) { showToast('Failed to set expense', 'error'); return; }
+  await fetch(`/api/ledger/${rowId}/patch`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({field:'income', value: null})
+  });
+  showToast('Moved to Expense', 'success');
+  setTimeout(()=>location.reload(), 400);
+}
+
+// ── Duplicate entry (open add-row pre-filled) ─────────────
+async function duplicateEntry(rowId) {
+  let row;
+  try {
+    const r = await fetch('/api/ledger/row/' + rowId);
+    const d = await r.json(); row = d.row;
+  } catch(e) { showToast('Could not load row', 'error'); return; }
+  if (!row) return;
+  openAddRow();
+  const amt = parseFloat(row.amount || 0);
+  const sv = (id,v)=>{ const el=document.getElementById(id); if(el) el.value=v||''; };
+  sv('ar-date',     row.entry_date||''  );
+  sv('ar-nickname', row.nickname||''    );
+  sv('ar-job',      row.job_code||''    );
+  sv('ar-invoice',  row.invoice_number||'');
+  sv('ar-desc',     row.description||'');
+  sv('ar-vendor',   row.vendor||''      );
+  sv('ar-memo',     row.memo||''        );
+  const catEl=document.getElementById('ar-cat');
+  if(catEl&&row.category) for(const o of catEl.options) if(o.value===row.category){catEl.value=row.category;break;}
+  const payEl=document.getElementById('ar-payment');
+  if(payEl&&row.type_of_payment) for(const o of payEl.options) if(o.value===row.type_of_payment){payEl.value=row.type_of_payment;break;}
+  // Fill income or expense from stored columns (support negative values)
+  const inc = row.income !== undefined && row.income !== null ? row.income : (amt > 0 ? amt : null);
+  const exp = row.expense !== undefined && row.expense !== null ? row.expense : (amt < 0 ? Math.abs(amt) : null);
+  if (inc !== null) sv('ar-income',  parseFloat(inc).toFixed(2));
+  if (exp !== null) sv('ar-expense', parseFloat(exp).toFixed(2));
+  showToast('Pre-filled from entry #'+rowId+' — review and save', 'success', 3000);
+}
 
 
 // ── Column → filter button mapping (drives renderFilterBtnRow) ─
@@ -780,9 +897,23 @@ const COL_FILTER_MAP = {
   type_of_payment:  {fc:'payment',    label:'Trans. Type'},
   memo:             null,               // no filter
   receipt:          {fc:'receipt',    label:'Receipt'},
-  receipt_verified: {fc:'rcpt_verified', label:'Rcpt ✓'},
-  coi_verified:     {fc:'coi_verified',  label:'COI ✓'},
 };
+
+// ── Pending filter toggle ─────────────────────────────────
+function togglePendingFilter() {
+  const qs = new URLSearchParams(window.location.search);
+  if (qs.get('show_pending') === '1') {
+    qs.delete('show_pending');
+  } else {
+    qs.set('show_pending', '1');
+  }
+  qs.set('page', '1');
+  window.location.search = qs.toString();
+}
+
+
+// Duplicate review: use full page at /ledger/duplicates
+
 
 function renderFilterBtnRow() {
   const cols = loadCols();
@@ -827,8 +958,7 @@ function renderFilterBtnRow() {
 
 const SORT_MAP={date:'entry_date',nickname:'nickname',job_code:'job_code',invoice_number:'invoice_number',
   vendor:'vendor',category:'category',description:'description',
-  income:'amount',expense:'amount',type_of_payment:'type_of_payment',memo:'memo',
-  receipt_verified:'receipt_verified',coi_verified:'coi_verified'};
+  income:'amount',expense:'amount',type_of_payment:'type_of_payment',memo:'memo',receipt:'receipt_filename'};
 
 function applyColVisibility(){
   const cols=loadCols();
@@ -840,10 +970,13 @@ function applyColVisibility(){
   const curSort=qs.get('sort')||'entry_date';
   const curDir=qs.get('dir')||'desc';
 
-  cols.forEach(col=>{
+  cols.forEach((col,ci)=>{
     const th=document.createElement('th');
     th.dataset.col=col.key;
     if(!col.vis) th.style.display='none';
+    // Apply stored width
+    const w=col.w||80;
+    th.style.width=w+'px'; th.style.minWidth='40px';
     const sk=SORT_MAP[col.key];
     if(sk){
       const active=curSort===sk;
@@ -851,21 +984,34 @@ function applyColVisibility(){
       const nqs=new URLSearchParams(qs);
       nqs.set('sort',sk); nqs.set('dir',nd);
       const arrow=active?(curDir==='asc'?'▲':'▼'):'⇅';
-      th.innerHTML=`<span style="cursor:pointer;white-space:nowrap" onclick="location.href='?${nqs.toString()}'">
+      th.innerHTML=`<span style="cursor:pointer;white-space:nowrap;display:block;padding-right:8px;overflow:hidden;text-overflow:ellipsis" onclick="location.href='?${nqs.toString()}'">
         ${col.label} <span style="font-size:9px;opacity:${active?1:0.3}">${arrow}</span></span>`;
     } else {
-      th.textContent=col.label;
+      th.innerHTML=`<span style="display:block;padding-right:8px;overflow:hidden;text-overflow:ellipsis">${col.label}</span>`;
     }
+    // Resize handle
+    const handle=document.createElement('div');
+    handle.className='col-resize-handle';
+    handle.addEventListener('mousedown', e=>startColResize(e, th, col, ci));
+    th.appendChild(handle);
     thead.appendChild(th);
   });
   // actions th
-  const thA=document.createElement('th'); thA.style.width='60px'; thead.appendChild(thA);
+  const thA=document.createElement('th'); thA.style.width='60px'; thA.style.minWidth='60px'; thead.appendChild(thA);
 
-  // body cells
+  // body cells — set explicit width so columns respect stored widths without table-layout:fixed
   document.querySelectorAll('.col-cell').forEach(td=>{
     const c=cols.find(x=>x.key===td.dataset.col);
-    td.style.display=c?(c.vis?'':'none'):'';
+    if(!c){ td.style.display=''; return; }
+    td.style.display = c.vis ? '' : 'none';
+    if(c.vis){
+      const w = (c.w || 80) + 'px';
+      td.style.width    = w;
+      td.style.maxWidth = w;
+    }
   });
+  // Persist current state (ensures defaults are stored so widths survive reload)
+  saveCols(cols);
   // Rebuild filter button row to match new column order/visibility
   renderFilterBtnRow();
   updateExportLink(cols);
@@ -957,6 +1103,17 @@ function applyCols(){ applyColVisibility(); toggleColPanel(); }
 // ══════════════════════════════════════════
 //  INLINE EDITING
 // ══════════════════════════════════════════
+// Auto-open import modal if redirected from Settings data management
+if (new URLSearchParams(window.location.search).get('open_import') === '1') {
+  // Strip param from URL without reload
+  const cleanUrl = window.location.pathname + window.location.search
+    .replace(/[?&]open_import=1/, '').replace(/^\?&/, '?').replace(/^\?$/, '') || window.location.pathname;
+  history.replaceState(null, '', cleanUrl);
+  // DOM is already loaded since this script is at bottom of page — open directly
+  // Use timeout 0 to ensure all other DOMContentLoaded handlers have run first
+  setTimeout(() => openModal('modal-import'), 0);
+}
+
 document.addEventListener('click',function(e){
   const span=e.target.closest('.editable');
   if(!span||span.querySelector('input,select')) return;
@@ -980,15 +1137,17 @@ document.addEventListener('click',function(e){
     el=document.createElement('input'); el.type='text';
     el.value=span.textContent.trim()==='—'?'':span.textContent.trim();
     el.setAttribute('list',span.dataset.list||'');
-  } else if(type==='amount-income'){
+  } else if(type==='field-income'){
     el=document.createElement('input'); el.type='number'; el.step='0.01';
     const tr=span.closest('tr');
-    el.value=parseFloat(tr.dataset.amount||0).toFixed(2);
+    const inc=tr.dataset.income;
+    el.value = (inc!=='' && inc!==undefined) ? parseFloat(inc).toFixed(2) : parseFloat(tr.dataset.amount||0).toFixed(2);
     el.style.textAlign='right';
-  } else if(type==='amount-expense'){
+  } else if(type==='field-expense'){
     el=document.createElement('input'); el.type='number'; el.step='0.01';
     const tr=span.closest('tr');
-    el.value=Math.abs(parseFloat(tr.dataset.amount||0)).toFixed(2);
+    const exp=tr.dataset.expense;
+    el.value = (exp!=='' && exp!==undefined) ? parseFloat(exp).toFixed(2) : Math.abs(parseFloat(tr.dataset.amount||0)).toFixed(2);
     el.style.textAlign='right';
   } else {
     el=document.createElement('input'); el.type='text';
@@ -999,8 +1158,10 @@ document.addEventListener('click',function(e){
   el.focus(); if(el.select) el.select();
 
   function save(){
-    let val=el.value;
-    if(type==='amount-expense'){ const n=parseFloat(val); val=(n>0?-n:n).toFixed(2); }
+    let val=el.value.trim();
+    // income and expense store raw value (can be negative); no sign flip needed
+    // Empty string → send null to clear the column
+    if((type==='field-income'||type==='field-expense') && val===''){ val=null; }
     patchField(rowId,field,val,span);
   }
   function revert(){
@@ -1039,10 +1200,11 @@ async function patchField(rowId, field, value, span) {
   }
   span.classList.remove('cell-editing');
   showToast('Saved', 'success');
+  refreshTotalsBar();
   // If this edit happened inside an expand detail row, close it after save
   const expandRow = span.closest('tr[id^="expand-"]');
   if (expandRow) {
-    setTimeout(() => { expandRow.style.display = 'none'; }, 150);
+    setTimeout(() => { closeEntryModal(); }, 150);
   }
 }
 
@@ -1055,11 +1217,15 @@ function refreshRowCells(rowId, row) {
   if (!tr) return;
 
   // Update data attrs
-  tr.dataset.amount = row.amount || 0;
+  tr.dataset.amount  = row.amount  || 0;
+  tr.dataset.income  = row.income  !== undefined && row.income  !== null ? row.income  : '';
+  tr.dataset.expense = row.expense !== undefined && row.expense !== null ? row.expense : '';
   tr.dataset.vendor = row.vendor || '';
 
   // Amount cells
-  refreshAmountCells(rowId, parseFloat(row.amount || 0));
+  refreshAmountCells(rowId, parseFloat(row.amount || 0),
+    row.income  !== undefined && row.income  !== null ? parseFloat(row.income)  : null,
+    row.expense !== undefined && row.expense !== null ? parseFloat(row.expense) : null);
 
   // Text/simple cells — map col key → row field
   const CELL_MAP = {
@@ -1088,10 +1254,11 @@ function refreshRowCells(rowId, row) {
     const span = dateTd.querySelector('.editable');
     if (span) {
       span.classList.remove('cell-editing');
-      if (row.is_pending) {
+      const todayStr = new Date().toISOString().slice(0,10);
+      if (!row.entry_date || row.entry_date > todayStr) {
         span.className = 'editable pending-date';
         span.title = 'Click to set a real date and clear pending status';
-        span.textContent = '⏳ Pending';
+        span.textContent = '⏳ ' + (row.entry_date || 'Pending');
         tr.classList.add('is-pending');
       } else {
         span.className = 'editable mono';
@@ -1132,11 +1299,6 @@ function refreshRowCells(rowId, row) {
     const rf = row.receipt_filename || '';
     if (!rf) {
       rcptCell.innerHTML = `<button class="btn btn-xs btn-outline" onclick="openReceiptAssign(${rowId})" title="Assign receipt">📎</button>`;
-    } else if (row.receipt_verified) {
-      rcptCell.innerHTML = `<span class="receipt-cell" title="${esc(rf)}">
-        <a href="/files/receipts/${esc(rf)}" target="_blank" style="text-decoration:none">✅</a>
-        <button class="rcpt-action-btn" onclick="openReceiptAssign(${rowId},'${esc(rf)}')" title="Rename">✏️</button>
-      </span>`;
     } else {
       rcptCell.innerHTML = `<span class="receipt-cell" title="Not found: ${esc(rf)}">
         <a href="/files/receipts/${esc(rf)}" target="_blank"
@@ -1148,25 +1310,7 @@ function refreshRowCells(rowId, row) {
     }
   }
 
-  // Receipt verified toggle
-  const rvTd = tr.querySelector('[data-col="receipt_verified"]');
-  if (rvTd) {
-    const span = rvTd.querySelector('.editable');
-    if (span) {
-      span.classList.remove('cell-editing');
-      span.textContent = row.receipt_verified ? '✅' : '—';
-    }
-  }
 
-  // COI verified toggle
-  const coiTd = tr.querySelector('[data-col="coi_verified"]');
-  if (coiTd) {
-    const span = coiTd.querySelector('.editable');
-    if (span) {
-      span.classList.remove('cell-editing');
-      span.textContent = row.coi_verified ? '🛡️' : '—';
-    }
-  }
 
   // Status (shown in expand detail)
   const expRow = document.getElementById('expand-' + rowId);
@@ -1189,16 +1333,19 @@ function refreshRowCells(rowId, row) {
   }
 }
 
-function refreshAmountCells(rowId, amt) {
-  const tr = document.getElementById('row-' + rowId);
+function refreshAmountCells(rowId, amt, incVal, expVal) {
+  const tr  = document.getElementById('row-' + rowId);
   if (!tr) return;
   const incTd = tr.querySelector('[data-col="income"]');
   const expTd = tr.querySelector('[data-col="expense"]');
-  if (incTd) incTd.innerHTML = amt > 0
-    ? `<span class="editable amt-income" data-field="amount" data-id="${rowId}" data-type="amount-income">${fmtMoney(amt)}</span>`
+  const inc = (incVal !== undefined && incVal !== null) ? incVal : (amt > 0 ? amt : null);
+  const exp = (expVal !== undefined && expVal !== null) ? expVal : (amt < 0 ? Math.abs(amt) : null);
+  if (tr) { tr.dataset.income = inc !== null ? inc : ''; tr.dataset.expense = exp !== null ? exp : ''; }
+  if (incTd) incTd.innerHTML = inc !== null
+    ? `<span class="editable ${inc >= 0 ? 'amt-income' : 'amt-expense'}" data-field="income" data-id="${rowId}" data-type="field-income">${fmtMoney(Math.abs(inc))}${inc < 0 ? ' <small style="font-size:9px;opacity:.7">↩</small>' : ''}</span>`
     : '<span class="amt-dim">—</span>';
-  if (expTd) expTd.innerHTML = amt < 0
-    ? `<span class="editable amt-expense" data-field="amount" data-id="${rowId}" data-type="amount-expense">${fmtMoney(amt)}</span>`
+  if (expTd) expTd.innerHTML = exp !== null
+    ? `<span class="editable ${exp >= 0 ? 'amt-expense' : 'amt-income'}" data-field="expense" data-id="${rowId}" data-type="field-expense">${fmtMoney(Math.abs(exp))}${exp < 0 ? ' <small style="font-size:9px;opacity:.7">↩</small>' : ''}</span>`
     : '<span class="amt-dim">—</span>';
 }
 
@@ -1215,72 +1362,195 @@ function openAddRow(){
 function cancelAddRow(){ document.getElementById('add-row').style.display='none'; }
 
 async function submitAddRow(){
-  const date=document.getElementById('ar-date').value;
-  const incV=parseFloat(document.getElementById('ar-income').value)||0;
-  const expV=parseFloat(document.getElementById('ar-expense').value)||0;
-  if(!date){showToast('Date is required','error');return;}
-  if(!incV&&!expV){showToast('Enter income or expense amount','error');return;}
-  const amount=incV? incV : -expV;
-  const body={
-    entry_date:date,
-    nickname:document.getElementById('ar-nickname').value.trim(),
-    job_code:document.getElementById('ar-job').value.trim(),
-    invoice_number:document.getElementById('ar-invoice').value.trim(),
-    category:document.getElementById('ar-cat').value,
-    description:document.getElementById('ar-desc').value.trim(),
-    vendor:document.getElementById('ar-vendor').value.trim(),
-    amount,
-    type_of_payment:document.getElementById('ar-payment').value,
-    memo:document.getElementById('ar-memo').value.trim()
+  const date    = document.getElementById('ar-date').value.trim();
+  const incRaw  = document.getElementById('ar-income').value.trim();
+  const expRaw  = document.getElementById('ar-expense').value.trim();
+  const incV    = incRaw !== '' ? parseFloat(incRaw) : null;
+  const expV    = expRaw !== '' ? parseFloat(expRaw) : null;
+
+  if (incV === null && expV === null) {
+    showToast('Enter an income or expense amount', 'error');
+    document.getElementById('ar-income').focus();
+    return;
+  }
+  if (incV !== null && expV !== null) {
+    showToast('Fill income OR expense — not both at the same time', 'error');
+    return;
+  }
+
+  const body = {
+    entry_date:      date,
+    nickname:        document.getElementById('ar-nickname').value.trim(),
+    job_code:        document.getElementById('ar-job').value.trim(),
+    invoice_number:  document.getElementById('ar-invoice').value.trim(),
+    category:        document.getElementById('ar-cat').value,
+    description:     document.getElementById('ar-desc').value.trim(),
+    vendor:          document.getElementById('ar-vendor').value.trim(),
+    income:          incV,
+    expense:         expV,
+    type_of_payment: document.getElementById('ar-payment').value,
+    memo:            document.getElementById('ar-memo').value.trim()
   };
-  const r=await fetch('/ledger/new',{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)
-  });
-  const d=await r.json();
-  if(!r.ok||d.error){showToast(d.error||'Failed','error');return;}
-  showToast('Entry added','success');
-  cancelAddRow();
-  setTimeout(()=>location.reload(),300);
+
+  const saveBtn = document.querySelector('#add-row .btn-primary');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+
+  try {
+    const r = await fetch('/ledger/new', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    let d;
+    try { d = await r.json(); }
+    catch(jsonErr) {
+      showToast('Server error — check console (F12)', 'error');
+      console.error('submitAddRow: non-JSON response', r.status);
+      return;
+    }
+    if (!r.ok || d.error) {
+      showToast(d.error || ('Save failed (HTTP ' + r.status + ')'), 'error');
+      return;
+    }
+    showToast('Entry added', 'success');
+    cancelAddRow();
+    setTimeout(() => location.reload(), 300);
+  } catch(e) {
+    showToast('Network error: ' + e.message, 'error');
+    console.error('submitAddRow error:', e);
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '\u2713 Save'; }
+  }
 }
+
 
 // ══════════════════════════════════════════
 //  DELETE & EXPAND
 // ══════════════════════════════════════════
+async function confirmDeleteRow(id,vendor,date){
+  // Async wrapper for inline onclick in modal (which can't directly await)
+  if(!await appConfirmDanger(`Delete: ${vendor||'entry'} on ${date}?`, 'Delete Entry?', 'Delete', '🗑')) return;
+  closeEntryModal();
+  await _doDeleteRow(id);
+}
 async function deleteRow(id,vendor,date){
-  if(!confirm(`Delete: ${vendor||'entry'} on ${date}?`)) return;
+  if(!await appConfirmDanger(`Delete: ${vendor||'entry'} on ${date}?`, 'Delete Entry?', 'Delete', '🗑')) return;
+  await _doDeleteRow(id);
+}
+async function _doDeleteRow(id){
   const r=await fetch(`/ledger/${id}/delete`,{method:'POST',headers:{'Content-Type':'application/json'}});
   if(r.ok){
     document.getElementById('row-'+id)?.remove();
     document.getElementById('expand-'+id)?.remove();
     showToast('Deleted','success');
+    refreshTotalsBar();
   }
 }
-function toggleExpand(id){
-  const r=document.getElementById('expand-'+id);
-  if(!r) return;
-  const isOpen = r.style.display !== 'none';
-  // Close all other expand rows first
-  document.querySelectorAll('tr[id^="expand-"]').forEach(el => {
-    if(el.id !== 'expand-'+id) el.style.display = 'none';
+
+// Re-compute totals bar from visible rows (client-side, no reload needed)
+function refreshTotalsBar() {
+  let totalInc = 0, totalExp = 0;
+  document.querySelectorAll('tr.ledger-row').forEach(tr => {
+    const inc = tr.dataset.income !== '' ? parseFloat(tr.dataset.income) : NaN;
+    const exp = tr.dataset.expense !== '' ? parseFloat(tr.dataset.expense) : NaN;
+    const amt = parseFloat(tr.dataset.amount);
+    if (!isNaN(inc))                totalInc += inc;
+    else if (amt > 0 && isNaN(exp)) totalInc += amt;
+    if (!isNaN(exp))                totalExp += exp;
+    else if (amt < 0 && isNaN(inc)) totalExp += Math.abs(amt);
   });
-  r.style.display = isOpen ? 'none' : '';
+  const net = totalInc - totalExp;
+  const fmt = v => '$' + Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+  const incEl = document.getElementById('totals-income');
+  const expEl = document.getElementById('totals-expense');
+  const netEl = document.getElementById('totals-net');
+  const cntEl = document.getElementById('totals-count');
+  if (incEl) incEl.textContent = `▲ ${fmt(totalInc)}`;
+  if (expEl) expEl.textContent = `▼ ${fmt(totalExp)}`;
+  if (netEl) {
+    netEl.textContent = `Net ${net < 0 ? '-' : ''}${fmt(net)}`;
+    netEl.style.color = net >= 0 ? 'var(--green,#22c55e)' : 'var(--red,#ef4444)';
+  }
+  if (cntEl) {
+    const remaining = document.querySelectorAll('tr.ledger-row').length;
+    // keep the "X total" part unchanged, just update shown count
+    cntEl.textContent = cntEl.textContent.replace(/^\d+/, remaining);
+  }
+}
+// ── Entry Detail Modal ──────────────────────────────────────────────
+function toggleExpand(id){ openEntryModal(id); }  // ... button calls this
+
+async function openEntryModal(id){
+  const modal = document.getElementById('entry-detail-modal');
+  const body  = document.getElementById('edm-body');
+  const title = document.getElementById('edm-title');
+  body.innerHTML = '<div style="color:var(--text-dim);padding:20px 0;text-align:center">Loading…</div>';
+  modal.classList.add('open');
+
+  try {
+    const r = await fetch(`/api/ledger/row/${id}`);
+    const d = await r.json();
+    if(!d.row){ body.innerHTML = '<span style="color:var(--red)">Failed to load entry.</span>'; return; }
+    const row = d.row;
+
+    title.textContent = `Entry #${id} — ${row.vendor || '—'}`;
+
+    // ── Amount display ───────────────────────────────────────────────
+    const fmtAmt = v => v != null ? '$'+Math.abs(parseFloat(v)).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',') : null;
+    let incDisp = '—', expDisp = '—';
+    if(row.income  != null) incDisp = (row.income  < 0 ? '<span style="color:var(--red)">↩ ' : '<span style="color:var(--green)">') + fmtAmt(row.income)  + '</span>';
+    else if(!row.expense && row.amount > 0) incDisp = '<span style="color:var(--green)">'+fmtAmt(row.amount)+'</span>';
+    if(row.expense != null) expDisp = (row.expense < 0 ? '<span style="color:var(--green)">↩ ' : '<span style="color:var(--red)">') + fmtAmt(row.expense) + '</span>';
+    else if(!row.income  && row.amount < 0) expDisp = '<span style="color:var(--red)">'+fmtAmt(row.amount)+'</span>';
+
+    // ── Editable field helper ────────────────────────────────────────
+    const eSpan = (field, val, type='text', opts='') =>
+      `<span class="editable" data-field="${field}" data-id="${id}" data-type="${type}" ${opts}>${val||'—'}</span>`;
+
+    // ── Build grid ───────────────────────────────────────────────────
+    const fields = [
+      ['Date',        eSpan('entry_date',    row.entry_date||'Pending', 'date')],
+      ['Vendor',      eSpan('vendor',        row.vendor)],
+      ['Income',      incDisp],
+      ['Expense',     expDisp],
+      ['Category',    eSpan('category',      row.category)],
+      ['Description', eSpan('description',   row.description)],
+      ['Job Code',    eSpan('job_code',      row.job_code)],
+      ['Invoice #',   eSpan('invoice_number',row.invoice_number)],
+      ['Nickname',    eSpan('nickname',       row.nickname)],
+      ['Trans Type',  eSpan('type_of_payment',row.type_of_payment)],
+      ['Memo',        eSpan('memo',          row.memo)],
+      ['Notes',       eSpan('notes',         row.notes)],
+      ['Status',      eSpan('status', row.status||'Pending', 'select', 'data-options="Pending|Cleared|Reconciled"')],
+      ['Bank Acct',   row.account_name || '—'],
+      ['Receipt',     row.receipt_filename
+          ? `<a href="/files/receipts/${row.receipt_filename}" target="_blank" style="text-decoration:none">✅ ${row.receipt_filename}</a>`
+          : '—'],
+      ['COGS',        row.is_cogs ? '✓' : '—'],
+      ['Dup. Flag',   row.duplicate_flag || '—'],
+      ['Row ID',      `<span class="mono text-dim">#${id}</span>`],
+    ];
+
+    body.innerHTML = fields.map(([lbl,val])=>
+      `<div class="edm-field"><div class="label">${lbl}</div><div>${val}</div></div>`
+    ).join('');
+
+    // ── Action buttons row ───────────────────────────────────────────
+    body.innerHTML += `<div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+      <button class="btn btn-xs btn-outline" onclick="moveToIncome(${id});closeEntryModal()" title="Move amount to Income">💚 → Income</button>
+      <button class="btn btn-xs btn-outline" onclick="moveToExpense(${id});closeEntryModal()" title="Move amount to Expense">🔴 → Expense</button>
+      <button class="btn btn-xs btn-outline" onclick="duplicateEntry(${id});closeEntryModal()" title="Create copy of this entry">📋 Duplicate Entry</button>
+      <button class="btn btn-xs btn-danger" onclick="confirmDeleteRow(${id},'${(row.vendor||'').replace(/'/g,'')}','${row.entry_date||''}')" title="Delete">🗑 Delete</button>
+    </div>`;
+  } catch(e) {
+    body.innerHTML = `<span style="color:var(--red)">Error: ${e.message}</span>`;
+  }
 }
 
-// Close expand row when clicking outside of it or the parent row
-document.addEventListener('click', function(e) {
-  const expandRows = document.querySelectorAll('tr[id^="expand-"]:not([style*="display: none"]):not([style*="display:none"])');
-  expandRows.forEach(expRow => {
-    const id = expRow.id.replace('expand-', '');
-    const parentRow = document.getElementById('row-' + id);
-    // If click is not inside the expand row, not inside the parent row, 
-    // and not on the expand button itself, close it
-    if (!expRow.contains(e.target) && 
-        !(parentRow && parentRow.contains(e.target))) {
-      expRow.style.display = 'none';
-    }
-  });
-});
+function closeEntryModal(){
+  document.getElementById('entry-detail-modal').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeEntryModal(); });
 
 // ══════════════════════════════════════════
 //  ROW SELECTION & BULK EDIT
@@ -1330,7 +1600,7 @@ function toggleSelectAll(checked){
 async function bulkDeleteSelected(){
   const ids=Array.from(selectedIds);
   if(!ids.length){showToast('No rows selected','error');return;}
-  if(!confirm(`Delete ${ids.length} selected row${ids.length!==1?'s':''}? This cannot be undone.`)) return;
+  if(!await appConfirmDanger(`Delete ${ids.length} selected row${ids.length!==1?'s':''}?`, 'Delete Selected?', 'Delete All', '🗑')) return;
   let done=0;
   for(const id of ids){
     const r=await fetch(`/ledger/${id}/delete`,{method:'POST',headers:{'Content-Type':'application/json'}});
@@ -1352,7 +1622,7 @@ function openBulkEditModal() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
-  ['bulk-cat','bulk-payment','bulk-status','bulk-rcpt-verified','bulk-coi'].forEach(id => {
+  ['bulk-cat','bulk-payment','bulk-status'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -1376,8 +1646,6 @@ async function submitBulkEdit() {
     'bulk-nickname':      'nickname',
     'bulk-memo':          'memo',
     'bulk-notes':         'notes',
-    'bulk-rcpt-verified': 'receipt_verified',
-    'bulk-coi':           'coi_verified',
   };
   for (const [elId, field] of Object.entries(fieldMap)) {
     const el = document.getElementById(elId);
@@ -1551,8 +1819,6 @@ const ACTIVE_FILTERS = {
   sign:         new Set({{ (active_filters.get('sign',         []) | tojson) }}),
   payment:      new Set({{ (active_filters.get('payment',      []) | tojson) }}),
   receipt:      new Set({{ (active_filters.get('receipt',      []) | tojson) }}),
-  rcpt_verified:new Set({{ (active_filters.get('rcpt_verified',[]) | tojson) }}),
-  coi_verified: new Set({{ (active_filters.get('coi_verified', []) | tojson) }}),
 };
 
 // Static options for columns that don't need server fetch
@@ -1560,8 +1826,6 @@ const STATIC_OPTIONS = {
   sign:         [{v:'income',label:'Income',n:''},{v:'expense',label:'Expense',n:''}],
   receipt:      [{v:'needs_receipt',label:'Needs Receipt',n:''},{v:'missing',label:'No Filename',n:''},
                  {v:'unverified',label:'File Not Found',n:''},{v:'verified',label:'Verified ✅',n:''}],
-  rcpt_verified:[{v:'1',label:'Verified ✅',n:''},{v:'0',label:'Not Verified',n:''}],
-  coi_verified: [{v:'1',label:'Verified 🛡️',n:''},{v:'0',label:'Not Verified',n:''}],
 };
 
 let currentFilterCol = null;
@@ -1575,7 +1839,7 @@ function openFilter(col) {
     year:'Year', nickname:'Nickname', job:'Job Code', invoice:'Invoice #',
     cat:'Category', desc:'Description', vendor:'Vendor',
     payment:'Transaction Type', sign:'Income / Expense',
-    receipt:'Receipt Status', rcpt_verified:'Receipt Verified', coi_verified:'COI Verified'
+    receipt:'Receipt Status'
   };
   document.getElementById('fp-title').textContent = titles[col] || col;
   document.getElementById('fp-search').value = '';
@@ -1735,7 +1999,7 @@ function updateFilterBadges() {
     if (!vals.size) continue;
     const label = {year:'Year',nickname:'Nickname',job:'Job',invoice:'Invoice',
                    cat:'Cat',desc:'Desc',vendor:'Vendor',payment:'Payment',
-                   sign:'Type',receipt:'Receipt',rcpt_verified:'Rcpt✓',coi_verified:'COI✓'}[col] || col;
+                   sign:'Type',receipt:'Receipt'}[col] || col;
     const chip = document.createElement('div');
     chip.className = 'filter-chip';
     const preview = Array.from(vals).slice(0,2).join(', ') + (vals.size > 2 ? ` +${vals.size-2}` : '');
@@ -2042,7 +2306,7 @@ async function submitReceiptAssign() {
 }
 
 async function clearReceiptAssign() {
-  if (!confirm('Remove the receipt filename from this row?')) return;
+  if (!await appConfirmDanger('Remove the receipt from this row?', 'Remove Receipt?', 'Remove', '📎')) return;
   const r = await fetch(`/api/ledger/assign-receipt/${raRowId}`, {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({filename: ''})
@@ -2061,10 +2325,48 @@ async function clearReceiptAssign() {
 }
 
 // ══════════════════════════════════════════
+//  COLUMN RESIZE
+// ══════════════════════════════════════════
+function startColResize(e, th, col, colIdx){
+  e.preventDefault();
+  e.stopPropagation();
+  const startX=e.clientX;
+  const startW=th.offsetWidth;
+  const handle=th.querySelector('.col-resize-handle');
+  if(handle) handle.classList.add('resizing');
+  document.body.style.cursor='col-resize';
+  document.body.style.userSelect='none';
+  let lastW=startW;  // track in closure so onUp doesn't rely on layout
+
+  function onMove(ev){
+    lastW=Math.max(40, startW+(ev.clientX-startX));
+    th.style.width=lastW+'px';
+    document.querySelectorAll(`.col-cell[data-col="${col.key}"]`).forEach(td=>{
+      td.style.width=lastW+'px';
+      td.style.maxWidth=lastW+'px';
+    });
+  }
+  function onUp(){
+    document.removeEventListener('mousemove',onMove);
+    document.removeEventListener('mouseup',onUp);
+    document.body.style.cursor='';
+    document.body.style.userSelect='';
+    if(handle) handle.classList.remove('resizing');
+    // Persist the tracked width (not th.offsetWidth which can mis-read mid-layout)
+    const cols=loadCols();
+    const found=cols.find(x=>x.key===col.key);
+    if(found){ found.w=lastW; saveCols(cols); }
+  }
+  document.addEventListener('mousemove',onMove);
+  document.addEventListener('mouseup',onUp);
+}
+
+// ══════════════════════════════════════════
 //  INIT
 // ══════════════════════════════════════════
 document.addEventListener('DOMContentLoaded',()=>{
   applyColVisibility();
+
   updateFilterBadges();
   // Sync search input with current URL q param
   const qParam = new URLSearchParams(location.search).get('q') || '';
@@ -2091,4 +2393,16 @@ document.addEventListener('DOMContentLoaded',()=>{
 });
 window.addEventListener('resize', alignFilterButtons);
 </script>
+
+<!-- ═══ ENTRY DETAIL MODAL ═══ -->
+<div id="entry-detail-modal" onclick="if(event.target===this)closeEntryModal()">
+  <div id="entry-detail-box">
+    <button id="entry-detail-close" onclick="closeEntryModal()" title="Close">✕</button>
+    <h3 id="edm-title">Entry Details</h3>
+    <div class="edm-grid" id="edm-body">
+      <div style="color:var(--text-dim);font-size:12px">Loading…</div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

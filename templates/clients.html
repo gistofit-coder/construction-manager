@@ -84,6 +84,12 @@
       {% if q or status_filter %}
         <a href="/clients" class="btn btn-outline btn-sm">Clear</a>
       {% endif %}
+      {# Active/Inactive toggle — outside form so it doesn't reset other filters #}
+      <a href="/clients?q={{ q }}&status={{ status_filter }}&show_inactive={{ '0' if show_inactive else '1' }}"
+         class="btn btn-sm {% if show_inactive %}btn-primary{% else %}btn-outline{% endif %}"
+         title="{{ 'Hide inactive clients' if show_inactive else 'Show inactive clients' }}">
+        {% if show_inactive %}👁 Hide Inactive{% else %}👁 Show Inactive{% endif %}
+      </a>
     </form>
   </div>
 </div>
@@ -139,8 +145,8 @@
               {% if c.email2 %}<a href="mailto:{{ c.email2 }}">{{ c.email2 }}</a>{% endif %}
               {% if not c.email1 and not c.email2 %}<span class="text-dim">—</span>{% endif %}
             </div></td>
-            <td><span class="badge badge-{% if c.status=='Active' %}green{% elif c.status=='Prospect' %}blue{% else %}gray{% endif %}">
-              {{ c.status or 'Active' }}</span></td>
+            <td><span class="badge badge-{% if c.computed_status=='Active' %}green{% elif c.computed_status=='Inactive' %}yellow{% elif c.status=='Prospect' %}blue{% else %}gray{% endif %}">
+              {{ c.computed_status or c.status or 'Inactive' }}</span></td>
             <td class="amount">{% if c.total_invoiced %}${{ '{:,.2f}'.format(c.total_invoiced) }}{% else %}—{% endif %}</td>
             <td class="amount text-green">{% if c.total_paid %}${{ '{:,.2f}'.format(c.total_paid) }}{% else %}—{% endif %}</td>
             <td style="text-align:center">
@@ -153,7 +159,7 @@
                       onclick="toggleCard({{ c.id }},this)">Edit</button>
               <a href="/clients/{{ c.id }}/edit" class="btn btn-outline btn-xs" title="Edit">✏️</a>
               <form method="POST" action="/clients/{{ c.id }}/delete" style="display:inline"
-                    onsubmit="return confirm('Archive {{ c.full_name|replace("'","\\'")|replace('"','') }}?')">
+                    onsubmit="event.preventDefault();(async()=>{if(await appConfirmDanger('Archive {{ c.full_name|replace("'","")|replace('"','') }}?','Archive Client?','Archive','🗂'))this.submit()})()" >
                 <button type="submit" class="btn btn-danger btn-xs">🗑</button>
               </form>
             </td>
@@ -196,7 +202,7 @@
                   <div class="info-group"><label>Email 2</label>
                     <span>{% if c.email2 %}<a href="mailto:{{ c.email2 }}">{{ c.email2 }}</a>{% else %}—{% endif %}</span></div>
                   <div class="info-group"><label>Status</label>
-                    <span>{{ c.status or 'Active' }}</span></div>
+                    <span>{{ c.computed_status or c.status or 'Inactive' }}</span></div>
                   {% if c.notes %}
                   <div class="info-group" style="grid-column:1/-1"><label>Notes</label>
                     <span>{{ c.notes }}</span></div>
@@ -217,20 +223,54 @@
         </tbody>
       </table>
     </div>
-    {% if pages > 1 %}
-    <div class="flex gap-8" style="padding:12px;justify-content:center">
-      {% if page > 1 %}<a href="?page={{ page-1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">← Prev</a>{% endif %}
-      <span class="text-dim" style="align-self:center">Page {{ page }} of {{ pages }}</span>
-      {% if page < pages %}<a href="?page={{ page+1 }}&q={{ q }}&status={{ status_filter }}" class="btn btn-outline btn-sm">Next →</a>{% endif %}
+    {% if pages >= 1 %}
+    <div class="flex gap-8" style="padding:8px 14px;justify-content:center;align-items:center;border-top:1px solid var(--border);flex-wrap:wrap">
+      {%- set ns = namespace(parts=[]) -%}
+      {%- for k, v in request.args.items() -%}
+        {%- if k != 'page' -%}{%- set ns.parts = ns.parts + [k+'='+v] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set qs_np = ns.parts|join('&') -%}
+      {% if page > 1 %}
+        <a href="?page=1&{{ qs_np }}" class="btn btn-outline btn-sm" title="First page">«</a>
+        <a href="?page={{ page-1 }}&{{ qs_np }}" class="btn btn-outline btn-sm">← Prev</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">«</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">← Prev</span>
+      {% endif %}
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)">
+        Page
+        <input type="number" id="cl-page-jump" min="1" max="{{ pages }}" value="{{ page }}"
+               style="width:48px;text-align:center;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:11px"
+               onkeydown="if(event.key==='Enter'){var p=Math.max(1,Math.min({{ pages }},parseInt(this.value)||1));window.location='?page='+p+'&{{ qs_np }}';}">
+        / {{ pages }}
+        <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:10px"
+                onclick="var p=Math.max(1,Math.min({{ pages }},parseInt(document.getElementById('cl-page-jump').value)||1));window.location='?page='+p+'&{{ qs_np }}';">Go</button>
+      </span>
+      {% if page < pages %}
+        <a href="?page={{ page+1 }}&{{ qs_np }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ pages }}&{{ qs_np }}" class="btn btn-outline btn-sm" title="Last page">»</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">Next →</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">»</span>
+      {% endif %}
     </div>
     {% endif %}
     {% else %}
     <div class="empty-state">
       <div class="icon">👥</div>
-      {% if q %}<p>No clients matching "{{ q }}"</p>
+      {% if q %}
+        <p>No clients matching "{{ q }}"</p>
         <a href="/clients" class="btn btn-outline btn-sm mt-8">Clear search</a>
-      {% else %}<p>No clients yet.</p>
-        <a href="/clients/new" class="btn btn-primary mt-8">Add Your First Client</a>{% endif %}
+      {% elif not show_inactive %}
+        {# Hidden inactive clients — prompt to reveal them #}
+        <p style="color:var(--text-dim)">No active clients found.</p>
+        <p style="font-size:11px;color:var(--text-dim);margin-top:6px">There may be inactive clients not shown.</p>
+        <a href="/clients?show_inactive=1" class="btn btn-outline btn-sm mt-8">👁 Show All Clients</a>
+        <a href="/clients/new" class="btn btn-primary btn-sm mt-8">+ New Client</a>
+      {% else %}
+        <p>No clients yet.</p>
+        <a href="/clients/new" class="btn btn-primary mt-8">Add Your First Client</a>
+      {% endif %}
     </div>
     {% endif %}
   </div>

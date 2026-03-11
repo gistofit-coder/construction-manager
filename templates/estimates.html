@@ -126,7 +126,8 @@
 {% block scripts %}
 <script>
 async function deleteEst(id) {
-  if (!confirm('Delete this estimate?')) return;
+  const ok = await appConfirmDanger('Delete this estimate? This cannot be undone.', 'Delete Estimate?', 'Delete', '🗑');
+  if (!ok) return;
   const res  = await fetch(`/api/estimates/${id}/delete`, {method:'POST', headers:{'Content-Type':'application/json'}});
   const data = await res.json();
   if (data.success) { showToast('Deleted', 'success'); setTimeout(() => window.location.reload(), 500); }

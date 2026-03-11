@@ -59,8 +59,9 @@ def clients():
     try:
         q = request.args.get('q', '').strip()
         status_filter = request.args.get('status', '')
+        show_inactive = request.args.get('show_inactive', '0') == '1'
         page = int(request.args.get('page', 1))
-        per_page = 999999 if _get_config().get('continuous_scroll') else 50
+        per_page = 50
 
         where = ["c.is_deleted=0"]
         params = []
@@ -70,6 +71,12 @@ def clients():
         if status_filter:
             where.append("c.status=?")
             params.append(status_filter)
+        # Hide inactive (no open jobs, not Prospect/Archived) unless show_inactive
+        if not show_inactive and not status_filter:
+            where.append(
+                "(c.status IN ('Prospect','Archived') OR EXISTS("
+                "SELECT 1 FROM jobs j WHERE j.client_id=c.id AND j.is_deleted=0 "
+                "AND j.status IN ('Active','Bidding')))")
 
         where_sql = " AND ".join(where)
         total = conn.execute(f"SELECT COUNT(*) FROM clients c WHERE {where_sql}", params).fetchone()[0]
@@ -79,17 +86,41 @@ def clients():
                 (SELECT COUNT(*) FROM jobs j WHERE j.client_id=c.id AND j.is_deleted=0) AS job_count,
                 (SELECT COALESCE(SUM(i.amount),0) FROM invoices i WHERE i.client_id=c.id AND i.is_deleted=0) AS total_invoiced,
                 (SELECT COALESCE(SUM(i.amount_paid),0) FROM invoices i WHERE i.client_id=c.id AND i.is_deleted=0) AS total_paid,
-                (SELECT MAX(i.invoice_date) FROM invoices i WHERE i.client_id=c.id AND i.is_deleted=0) AS last_invoice_date
+                (SELECT MAX(i.invoice_date) FROM invoices i WHERE i.client_id=c.id AND i.is_deleted=0) AS last_invoice_date,
+                (SELECT COUNT(*) FROM jobs j
+                 WHERE j.client_id=c.id AND j.is_deleted=0
+                   AND j.status IN ('Active','Bidding')) AS open_job_count
             FROM clients c
             WHERE {where_sql}
-            ORDER BY c.last_name, c.full_name
+            ORDER BY
+                CASE WHEN open_job_count > 0 THEN 0
+                     WHEN c.status='Prospect' THEN 1
+                     WHEN c.status='Archived' THEN 3
+                     ELSE 2 END,
+                c.last_name, c.full_name
             LIMIT ? OFFSET ?
         """, params + [per_page, (page-1)*per_page]).fetchall()
 
+        # Compute effective status: 'Active' only if client has at least one open job
+        rows_out = []
+        for row in rows:
+            d = dict(row)
+            stored = d.get('status') or 'Active'
+            if stored == 'Archived':
+                d['computed_status'] = 'Archived'
+            elif d.get('open_job_count', 0) > 0:
+                d['computed_status'] = 'Active'
+            else:
+                d['computed_status'] = 'Inactive'
+            # computed_status already filtered at SQL level when show_inactive=False
+            rows_out.append(d)
+        rows = rows_out
+
         return render_template('clients.html',
             config=config, badges=badges,
-            clients=[dict(r) for r in rows],
+            clients=rows,
             q=q, status_filter=status_filter,
+            show_inactive=show_inactive,
             total=total, page=page, per_page=per_page,
             pages=(total + per_page - 1) // per_page,
         )
@@ -1258,6 +1289,10 @@ def job_patch(job_id):
             f"UPDATE jobs SET {field}=?, updated_at=datetime('now') WHERE id=?",
             [value, job_id]
         )
+        log_action(conn, 'jobs', job_id, 'UPDATE',
+                   old_data={field: dict(old).get(field)},
+                   new_data={field: value},
+                   field_name=field)
     return jsonify({'success': True, 'field': field, 'value': value})
 
 
@@ -1291,6 +1326,9 @@ def api_job_milestone_add(job_id):
             [job_id, title, data.get('due_date',''), data.get('notes',''), data.get('sort_order',0)]
         )
         row = conn.execute("SELECT * FROM job_milestones WHERE id=?", [cur.lastrowid]).fetchone()
+        log_action(conn, 'job_milestones', cur.lastrowid, 'INSERT',
+                   new_data=dict(row) if row else {},
+                   user_label=f'Added milestone: {title}')
     return jsonify({'success': True, 'milestone': dict(row)})
 
 
@@ -1303,17 +1341,25 @@ def api_milestone_patch(milestone_id):
         return jsonify({'error': 'No valid fields'}), 400
     with db() as conn:
         for field, value in updates.items():
+            old_row = conn.execute("SELECT * FROM job_milestones WHERE id=?", [milestone_id]).fetchone()
             conn.execute(
                 f"UPDATE job_milestones SET {field}=? WHERE id=?",
                 [value, milestone_id]
             )
+            log_action(conn, 'job_milestones', milestone_id, 'UPDATE',
+                       old_data={field: dict(old_row).get(field)} if old_row else {},
+                       new_data={field: value}, field_name=field)
     return jsonify({'success': True})
 
 
 @phase2.route('/api/milestones/<int:milestone_id>', methods=['DELETE'])
 def api_milestone_delete(milestone_id):
     with db() as conn:
+        old_row = conn.execute("SELECT * FROM job_milestones WHERE id=?", [milestone_id]).fetchone()
         conn.execute("DELETE FROM job_milestones WHERE id=?", [milestone_id])
+        log_action(conn, 'job_milestones', milestone_id, 'DELETE',
+                   old_data=dict(old_row) if old_row else {},
+                   user_label=f'Deleted milestone #{milestone_id}')
     return jsonify({'success': True})
 
 
@@ -1322,6 +1368,9 @@ def job_delete(job_id):
     with db() as conn:
         j = conn.execute("SELECT job_code FROM jobs WHERE id=?", [job_id]).fetchone()
         soft_delete(conn, 'jobs', job_id)
+        log_action(conn, 'jobs', job_id, 'DELETE',
+                   old_data=dict(j) if j else {},
+                   user_label=f'Deleted job {j["job_code"] if j else job_id}')
         code = j['job_code'] if j else str(job_id)
     flash(f'Job "{code}" archived.', 'success')
     return redirect(url_for('phase2.jobs'))

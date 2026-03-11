@@ -1,186 +1,226 @@
 {% extends "base.html" %}
-{% block title %}{{ acct.account_name }} — Reconciliation{% endblock %}
-{% block topbar_title %}🏦 {{ acct.account_name }}{% endblock %}
-{% block breadcrumb %}<a href="/">Home</a> / <a href="/reconciliation">Bank Reconciliation</a> / {{ acct.account_name }}{% endblock %}
+{% block title %}Reconcile – {{ acct.account_name }}{% endblock %}
 
 {% block content %}
-<!-- ── Stats Tiles ── -->
-<div class="kpi-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:14px">
-  <div class="kpi-tile">
-    <div class="kpi-label">Total Transactions</div>
-    <div class="kpi-value">{{ stats.total or 0 }}</div>
-  </div>
-  <div class="kpi-tile {% if stats.unmatched %}yellow{% endif %}">
-    <div class="kpi-label">Unmatched</div>
-    <div class="kpi-value {% if stats.unmatched %}text-yellow{% endif %}">{{ stats.unmatched or 0 }}</div>
-  </div>
-  <div class="kpi-tile green">
-    <div class="kpi-label">Matched</div>
-    <div class="kpi-value text-green">{{ stats.matched or 0 }}</div>
-  </div>
-  <div class="kpi-tile">
-    <div class="kpi-label">Excluded</div>
-    <div class="kpi-value text-dim">{{ stats.excluded or 0 }}</div>
-  </div>
-  <div class="kpi-tile green">
-    <div class="kpi-label">Total Credits</div>
-    <div class="kpi-value" style="font-size:14px">${{ '{:,.2f}'.format(stats.total_credits or 0) }}</div>
-  </div>
-  <div class="kpi-tile">
-    <div class="kpi-label">Total Debits</div>
-    <div class="kpi-value" style="font-size:14px">${{ '{:,.2f}'.format(stats.total_debits or 0) }}</div>
+<div class="page-header" style="margin-bottom:14px">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <a href="/reconciliation" class="btn btn-outline btn-sm">← Accounts</a>
+    <h2 style="margin:0">{{ acct.account_name }}
+      <span class="badge" style="font-size:12px;margin-left:6px;background:{% if acct.account_type in ['CreditCard','LineOfCredit','Loan','OtherLiability'] %}var(--orange,#ed8936){% else %}var(--blue,#3182ce){% endif %};color:#fff">
+        {{ acct.account_type }}
+      </span>
+    </h2>
   </div>
 </div>
 
-<!-- ── Toolbar ── -->
-<div class="card" style="margin-bottom:12px">
-  <div class="card-body" style="padding:10px 14px">
-    <form method="GET" class="flex gap-8" style="flex-wrap:wrap;align-items:center">
-      <div class="form-group" style="margin:0">
-        <label>Status</label>
-        <select name="status" style="min-width:130px" onchange="this.form.submit()">
-          {% for s in ['Unmatched','Auto-Matched','Manual-Matched','Excluded','All'] %}
-          <option value="{{ s }}" {% if s == status_f %}selected{% endif %}>{{ s }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>From</label>
-        <input type="date" name="start" value="{{ start_date }}" style="width:130px">
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>To</label>
-        <input type="date" name="end" value="{{ end_date }}" style="width:130px">
-      </div>
-      <button type="submit" class="btn btn-primary btn-sm">Filter</button>
-      {% if start_date or end_date or status_f != 'Unmatched' %}
-        <a href="/reconciliation/{{ acct.id }}" class="btn btn-outline btn-sm">Clear</a>
+{# ── 6 KPI tiles (matching screenshot) ── #}
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+
+  <div style="flex:1;min-width:155px;padding:14px 18px;border-radius:8px;background:var(--card-bg);border:1px solid var(--border)">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Total Transactions</div>
+    <div style="font-size:28px;font-weight:700;color:var(--text)">{{ stats.total or 0 }}</div>
+  </div>
+
+  <div onclick="setFilter('Unmatched')" style="flex:1;min-width:155px;padding:14px 18px;border-radius:8px;cursor:pointer;border:2px solid {% if status_f == 'Unmatched' %}#e53e3e{% else %}var(--border){% endif %};background:{% if status_f == 'Unmatched' %}rgba(229,62,62,.10){% else %}var(--card-bg){% endif %}">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Unmatched</div>
+    <div style="font-size:28px;font-weight:700;color:#e53e3e">{{ stats.unmatched or 0 }}</div>
+  </div>
+
+  <div onclick="setFilter('Auto-Matched')" style="flex:1;min-width:155px;padding:14px 18px;border-radius:8px;cursor:pointer;border:2px solid {% if status_f in ['Auto-Matched','Manual-Matched'] %}#38a169{% else %}var(--border){% endif %};background:{% if status_f in ['Auto-Matched','Manual-Matched'] %}rgba(56,161,105,.10){% else %}var(--card-bg){% endif %}">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Matched</div>
+    <div style="font-size:28px;font-weight:700;color:#38a169">{{ stats.matched or 0 }}</div>
+  </div>
+
+  <div onclick="setFilter('Excluded')" style="flex:1;min-width:155px;padding:14px 18px;border-radius:8px;cursor:pointer;border:2px solid {% if status_f == 'Excluded' %}#718096{% else %}var(--border){% endif %};background:{% if status_f == 'Excluded' %}rgba(113,128,150,.10){% else %}var(--card-bg){% endif %}">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Excluded</div>
+    <div style="font-size:28px;font-weight:700;color:var(--muted)">{{ stats.excluded or 0 }}</div>
+  </div>
+
+  <div style="flex:1;min-width:155px;padding:14px 18px;border-radius:8px;background:var(--card-bg);border:1px solid var(--border)">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Total Credits</div>
+    <div style="font-size:22px;font-weight:700;color:#38a169">${{ '{:,.2f}'.format(stats.total_credits or 0) }}</div>
+  </div>
+
+  <div style="flex:1;min-width:155px;padding:14px 18px;border-radius:8px;background:var(--card-bg);border:1px solid var(--border)">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Total Debits</div>
+    <div style="font-size:22px;font-weight:700;color:var(--text)">${{ '{:,.2f}'.format(stats.total_debits or 0) }}</div>
+  </div>
+
+</div>
+
+{# ── Filter bar + toolbar ── #}
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
+  <div class="form-group" style="margin:0">
+    <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">STATUS</label>
+    <select id="filter-status" class="form-control" style="width:150px" onchange="applyFilter()">
+      {% for s in ['Unmatched','Auto-Matched','Manual-Matched','Excluded','All'] %}
+      <option value="{{ s }}" {% if status_f == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="form-group" style="margin:0">
+    <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">FROM</label>
+    <input type="date" id="filter-start" value="{{ start_date }}" class="form-control" style="width:140px">
+  </div>
+  <div class="form-group" style="margin:0">
+    <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:2px">TO</label>
+    <input type="date" id="filter-end"  value="{{ end_date }}"   class="form-control" style="width:140px">
+  </div>
+  <button type="button" class="btn btn-primary btn-sm" onclick="applyFilter()">Filter</button>
+  {% if start_date or end_date or status_f != 'Unmatched' %}
+  <a href="/reconciliation/{{ acct.id }}" class="btn btn-outline btn-sm">Clear</a>
+  {% endif %}
+
+  <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+    <button type="button" class="btn btn-outline btn-sm" id="btn-auto-match"
+            onclick="runAutoMatch({{ acct.id }})">🔄 Re-run Auto-Match</button>
+    <a href="/reconciliation/{{ acct.id }}/export?status={{ status_f }}" class="btn btn-outline btn-sm">↑ Export</a>
+    <a href="/reconciliation/{{ acct.id }}/session" class="btn btn-outline btn-sm">📋 Sessions</a>
+    <a href="/reconciliation/{{ acct.id }}/import" class="btn btn-primary btn-sm">⬆ Import CSV</a>
+  </div>
+</div>
+
+{# ── Bulk action bar ── #}
+<div id="bulk-bar" style="display:none;gap:10px;align-items:center;padding:8px 12px;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;margin-bottom:10px">
+  <span id="bulk-count">0 selected</span>
+  <button type="button" class="btn btn-sm btn-outline" onclick="clearBulk()">Clear</button>
+  <button type="button" class="btn btn-sm" style="background:#f59e0b;color:#000"
+          onclick="openBulkExclude()">Exclude Selected</button>
+</div>
+
+{# ── Transaction table ── #}
+{% if transactions %}
+<div style="overflow-x:auto">
+<table class="table" id="recon-table">
+  <thead>
+    <tr>
+      <th style="width:28px"><input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)"></th>
+      <th>Date</th>
+      <th>Bank Description</th>
+      <th style="text-align:right">Amount</th>
+      <th>Type</th>
+      <th>Status</th>
+      <th>Matched Ledger Entry</th>
+      <th style="min-width:200px">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for t in transactions %}
+  <tr id="row-{{ t.id }}" class="{% if t.match_status == 'Excluded' %}text-dim{% endif %}">
+    <td><input type="checkbox" class="bulk-cb" data-id="{{ t.id }}" onchange="toggleBulk({{ t.id }}, this.checked)"></td>
+
+    <td style="white-space:nowrap;font-size:13px">{{ t.transaction_date }}</td>
+
+    <td style="font-size:13px;max-width:320px">
+      <span title="{{ t.description }}">{{ t.description or '—' }}</span>
+      {% if t.notes %}<div style="font-size:11px;color:var(--muted)">{{ t.notes }}</div>{% endif %}
+    </td>
+
+    <td style="text-align:right;font-size:13px;white-space:nowrap">
+      {% if t.transaction_type == 'Credit' %}
+        <strong style="color:#38a169">+${{ '%.2f'|format(t.amount) }}</strong>
+      {% else %}
+        <strong style="color:#e53e3e">-${{ '%.2f'|format(t.amount) }}</strong>
       {% endif %}
-      <div style="margin-left:auto;display:flex;gap:8px">
-        <button type="button" class="btn btn-outline btn-sm"
-                onclick="runAutoMatch({{ acct.id }})">🔄 Re-run Auto-Match</button>
-        <a href="/reconciliation/{{ acct.id }}/export?status={{ status_f }}" class="btn btn-outline btn-sm">⬇ Export</a>
-        <a href="/reconciliation/{{ acct.id }}/session" class="btn btn-outline btn-sm">📋 Sessions</a>
-        <a href="/reconciliation/{{ acct.id }}/import" class="btn btn-primary btn-sm">⬆ Import CSV</a>
-      </div>
-    </form>
-  </div>
-</div>
+    </td>
 
-<!-- ── Transactions Table ── -->
-<div class="card">
-  <div class="card-body no-pad">
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:105px">Date</th>
-            <th>Bank Description</th>
-            <th style="width:90px;text-align:right">Amount</th>
-            <th style="width:70px;text-align:center">Type</th>
-            <th style="width:110px">Status</th>
-            <th>Matched Ledger Entry</th>
-            <th style="width:160px">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for t in transactions %}
-          <tr id="txn-{{ t.id }}" class="{% if t.match_status == 'Unmatched' %}row-unmatched{% elif t.match_status in ['Auto-Matched','Manual-Matched'] %}row-matched{% endif %}">
-            <td class="mono text-dim" style="font-size:11px">{{ t.transaction_date }}</td>
-            <td>
-              <div style="font-size:12px">{{ t.description or '—' }}</div>
-              {% if t.reference_number %}
-              <div class="text-dim" style="font-size:10px">Ref: {{ t.reference_number }}</div>
-              {% endif %}
-              {% if t.notes and t.match_status == 'Excluded' %}
-              <div class="text-dim" style="font-size:10px;font-style:italic">{{ t.notes }}</div>
-              {% endif %}
-            </td>
-            <td style="text-align:right">
-              <span class="mono {% if t.transaction_type == 'Credit' %}text-green{% else %}text-dim{% endif %}" style="font-weight:600">
-                {% if t.transaction_type == 'Debit' %}−{% else %}+{% endif %}${{ '{:,.2f}'.format(t.amount) }}
-              </span>
-            </td>
-            <td style="text-align:center">
-              <span class="badge {% if t.transaction_type == 'Credit' %}badge-green{% else %}badge-gray{% endif %}" style="font-size:9px">
-                {{ t.transaction_type }}
-              </span>
-            </td>
-            <td>
-              {% set status_colors = {
-                'Unmatched': 'yellow',
-                'Auto-Matched': 'blue',
-                'Manual-Matched': 'green',
-                'Excluded': 'gray',
-                'Needs-Review': 'red',
-              } %}
-              <span class="badge badge-{{ status_colors.get(t.match_status, 'gray') }}" style="font-size:9px">
-                {{ t.match_status }}
-              </span>
-            </td>
-            <td style="font-size:11px">
-              {% if t.ledger_desc %}
-              <div style="font-weight:500">{{ t.ledger_desc[:40] }}{% if t.ledger_desc|length > 40 %}…{% endif %}</div>
-              <div class="text-dim">{{ t.ledger_date }} · {{ t.category or '' }}{% if t.job_code %} · {{ t.job_code }}{% endif %}</div>
-              {% elif t.match_status == 'Excluded' %}
-              <span class="text-dim" style="font-style:italic">Excluded</span>
-              {% else %}
-              <button class="btn btn-xs btn-outline"
-                      onclick="openMatchPicker({{ t.id }}, {{ t.amount }}, '{{ t.transaction_date }}')">
-                🔗 Find Match
-              </button>
-              <button class="btn btn-xs btn-outline" style="margin-left:4px"
-                      onclick="openCreateLedger({{ t.id }}, '{{ t.description|replace("'","") }}', {{ t.amount }}, '{{ t.transaction_date }}')">
-                ➕ Create Entry
-              </button>
-              {% endif %}
-            </td>
-            <td>
-              <div class="flex gap-4">
-                {% if t.match_status in ['Auto-Matched','Manual-Matched'] %}
-                <button class="btn btn-xs btn-outline" onclick="unmatch({{ t.id }})" title="Remove match">↩ Unmatch</button>
-                {% elif t.match_status == 'Unmatched' %}
-                <button class="btn btn-xs btn-outline"
-                        onclick="excludeTxn({{ t.id }})" title="Exclude (bank fee, transfer)">🚫 Exclude</button>
-                {% elif t.match_status == 'Excluded' %}
-                <button class="btn btn-xs btn-outline" onclick="unmatch({{ t.id }})" title="Un-exclude">↩ Restore</button>
-                {% endif %}
-                <button class="btn btn-xs btn-danger" onclick="deleteTxn({{ t.id }})" title="Delete">🗑</button>
-              </div>
-            </td>
-          </tr>
-          {% else %}
-          <tr>
-            <td colspan="7" style="text-align:center;padding:40px" class="text-dim">
-              <div style="font-size:32px;margin-bottom:8px">🏦</div>
-              No transactions found{% if status_f != 'All' %} with status "{{ status_f }}"{% endif %}.
-              <br>
-              <a href="/reconciliation/{{ acct.id }}/import" class="btn btn-primary btn-sm" style="margin-top:12px">⬆ Import Bank Statement</a>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
-</div>
+    <td style="font-size:12px">
+      {% if t.transaction_type == 'Credit' %}
+        <span class="badge" style="background:rgba(56,161,105,.2);color:#38a169;font-size:10px">CREDIT</span>
+      {% else %}
+        <span style="font-size:12px;color:var(--muted)">DEBIT</span>
+      {% endif %}
+    </td>
 
-<!-- ── Manual Match Picker Modal ── -->
+    <td>
+      {% if t.match_status == 'Unmatched' %}
+        <span class="badge" style="background:#e53e3e;color:#fff;font-size:10px">UNMATCHED</span>
+      {% elif t.match_status == 'Auto-Matched' %}
+        <span class="badge" style="background:#38a169;color:#fff;font-size:10px">AUTO</span>
+      {% elif t.match_status == 'Manual-Matched' %}
+        <span class="badge" style="background:#3182ce;color:#fff;font-size:10px">MANUAL</span>
+      {% elif t.match_status == 'Excluded' %}
+        <span class="badge" style="background:#718096;color:#fff;font-size:10px">EXCLUDED</span>
+      {% endif %}
+    </td>
+
+    <td style="font-size:12px;color:var(--muted);max-width:220px">
+      {% if t.ledger_desc or t.ledger_vendor %}
+        <span>
+          {{ t.ledger_desc or t.ledger_vendor or '' }}
+          {% if t.ledger_amount is not none %} &middot; ${{ '%.2f'|format(t.ledger_amount|abs) }}{% endif %}
+          {% if t.ledger_date %} &middot; {{ t.ledger_date }}{% endif %}
+        </span>
+      {% else %}
+        <span style="color:var(--border)">—</span>
+      {% endif %}
+    </td>
+
+    <td style="white-space:nowrap">
+      {% if t.match_status == 'Unmatched' %}
+        <button class="btn btn-xs btn-outline"
+                data-bt-id="{{ t.id }}"
+                data-amount="{{ t.amount }}"
+                data-date="{{ t.transaction_date }}"
+                data-type="{{ t.transaction_type }}"
+                onclick="openMatchPicker(this)">🔗 Find Match</button>
+        <button class="btn btn-xs btn-outline" style="margin-left:4px"
+                data-bt-id="{{ t.id }}"
+                data-amount="{{ t.amount }}"
+                data-date="{{ t.transaction_date }}"
+                data-desc="{{ t.description|replace("'","&#39;") }}"
+                onclick="openCreateLedger(this)">+ Create Entry</button>
+        <button class="btn btn-xs btn-outline" style="margin-left:4px"
+                data-bt-id="{{ t.id }}"
+                onclick="excludeTxn(this)">● Exclude</button>
+      {% elif t.match_status in ['Auto-Matched','Manual-Matched'] %}
+        <button class="btn btn-xs btn-outline"
+                data-bt-id="{{ t.id }}"
+                onclick="unmatch(this.dataset.btId)">Unmatch</button>
+      {% elif t.match_status == 'Excluded' %}
+        <button class="btn btn-xs btn-outline"
+                data-bt-id="{{ t.id }}"
+                onclick="unmatch(this.dataset.btId)">Restore</button>
+      {% endif %}
+      <button class="btn btn-xs btn-danger" style="margin-left:4px"
+              data-bt-id="{{ t.id }}"
+              onclick="deleteTxn(this.dataset.btId)">🗑</button>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div style="text-align:center;padding:56px;color:var(--muted)">
+  <div style="font-size:48px;margin-bottom:12px">✅</div>
+  <div style="font-size:16px">No transactions match this filter.</div>
+  <div style="margin-top:10px"><a href="/reconciliation/{{ acct.id }}">View all</a></div>
+</div>
+{% endif %}
+
+
+{# ═══ MODALS ═══ #}
+
+{# Find Match modal #}
 <div class="modal-overlay" id="modal-match">
-  <div class="modal" style="max-width:680px">
+  <div class="modal" style="max-width:700px">
     <div class="modal-header">
-      <h3>🔗 Find Matching Ledger Entry</h3>
+      <h3>🔗 Find Match — $<span id="match-amount-display">0.00</span></h3>
       <button class="modal-close" onclick="closeModal('modal-match')">×</button>
     </div>
-    <div class="modal-body">
-      <div class="flex gap-8" style="margin-bottom:12px">
-        <input type="text" id="match-search" placeholder="Search by description, vendor, job code…"
-               style="flex:1" oninput="searchLedger()">
-        <span class="text-dim" style="align-self:center;font-size:12px">Amount: $<span id="match-amount">0</span></span>
+    <div class="modal-body" style="padding:0">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+        <input type="text" id="match-search" class="form-control"
+               placeholder="Search description, vendor, job code…"
+               oninput="onSearchInput()" style="width:100%">
       </div>
-      <div id="match-results" style="max-height:320px;overflow-y:auto">
-        <p class="text-dim" style="text-align:center;padding:20px">Searching…</p>
+      <div id="match-sel-bar" style="display:none;padding:6px 16px;border-bottom:1px solid var(--border);font-size:12px;align-items:center;gap:8px">
+        <span id="match-sel-summary"></span>
+        <button class="btn btn-xs btn-outline" onclick="clearSelections()" style="margin-left:auto">Clear</button>
+        <button class="btn btn-xs btn-primary" id="btn-match-sel" onclick="doMatchSelected()" disabled>Match Selected</button>
       </div>
+      <div id="match-results" style="max-height:400px;overflow-y:auto;padding:8px 0"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('modal-match')">Cancel</button>
@@ -188,230 +228,451 @@
   </div>
 </div>
 
-<!-- ── Create Ledger Entry Modal ── -->
-<div class="modal-overlay" id="modal-create-ledger">
-  <div class="modal" style="max-width:440px">
+{# Create Ledger Entry modal #}
+<div class="modal-overlay" id="modal-create">
+  <div class="modal" style="max-width:460px">
     <div class="modal-header">
       <h3>➕ Create Ledger Entry</h3>
-      <button class="modal-close" onclick="closeModal('modal-create-ledger')">×</button>
+      <button class="modal-close" onclick="closeModal('modal-create')">×</button>
     </div>
     <div class="modal-body">
-      <p id="create-ledger-info" class="text-dim" style="font-size:12px;margin-bottom:12px"></p>
-      <div class="form-grid">
-        <div class="form-group full">
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" id="cr-desc" class="form-control">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label>Date <span style="color:red">*</span></label>
+          <input type="date" id="cr-date" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>Amount <span style="color:red">*</span></label>
+          <input type="number" id="cr-amount" class="form-control" step="0.01" placeholder="Negative = expense">
+        </div>
+        <div class="form-group">
           <label>Category</label>
-          <input type="text" id="cl-category" placeholder="e.g. Bank Fee, Office Supplies">
+          <input type="text" id="cr-category" class="form-control">
         </div>
         <div class="form-group">
-          <label>Job Code (optional)</label>
-          <input type="text" id="cl-job-code" placeholder="">
+          <label>Job Code</label>
+          <input type="text" id="cr-jobcode" class="form-control">
         </div>
-        <div class="form-group">
-          <label>Vendor (optional)</label>
-          <input type="text" id="cl-vendor" placeholder="">
-        </div>
-        <div class="form-group full">
-          <label>Notes</label>
-          <input type="text" id="cl-notes" placeholder="">
-        </div>
+      </div>
+      <div class="form-group">
+        <label>Vendor</label>
+        <input type="text" id="cr-vendor" class="form-control">
+      </div>
+      <div class="form-group">
+        <label>Memo / Notes</label>
+        <input type="text" id="cr-memo" class="form-control">
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('modal-create-ledger')">Cancel</button>
-      <button class="btn btn-primary" onclick="confirmCreateLedger()">➕ Create & Match</button>
+      <button class="btn btn-outline" onclick="closeModal('modal-create')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmCreateLedger()">➕ Create &amp; Match</button>
     </div>
   </div>
 </div>
 
-<!-- ── Exclude Modal ── -->
+{# Exclude modal #}
 <div class="modal-overlay" id="modal-exclude">
-  <div class="modal" style="max-width:360px">
+  <div class="modal" style="max-width:400px">
     <div class="modal-header">
-      <h3>🚫 Exclude Transaction</h3>
+      <h3>Exclude Transaction</h3>
       <button class="modal-close" onclick="closeModal('modal-exclude')">×</button>
     </div>
     <div class="modal-body">
+      <p class="text-dim" style="font-size:13px">No matching ledger entry (e.g. bank fee, transfer, reward).</p>
       <div class="form-group">
-        <label>Reason</label>
-        <input type="text" id="exclude-notes" placeholder="e.g. Bank fee, Transfer, Duplicate"
-               value="Bank fee">
+        <label>Reason / Notes</label>
+        <input type="text" id="excl-notes" class="form-control" placeholder="Optional">
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('modal-exclude')">Cancel</button>
-      <button class="btn btn-primary" onclick="confirmExclude()">🚫 Exclude</button>
+      <button class="btn btn-primary" onclick="confirmExclude()">Exclude</button>
     </div>
   </div>
 </div>
-{% endblock %}
 
-{% block scripts %}
-<style>
-.row-unmatched { background: rgba(243,156,18,0.03); }
-.row-matched   { background: rgba(39,174,96,0.03); }
-</style>
+{# Bulk Exclude modal #}
+<div class="modal-overlay" id="modal-bulk-exclude">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h3>Bulk Exclude</h3>
+      <button class="modal-close" onclick="closeModal('modal-bulk-exclude')">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="text-dim" style="font-size:13px">Exclude <span id="bulk-excl-count">0</span> selected transactions.</p>
+      <div class="form-group">
+        <label>Reason / Notes</label>
+        <input type="text" id="bulk-excl-notes" class="form-control" placeholder="e.g. Bank fees, transfers">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-bulk-exclude')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmBulkExclude()">Exclude All</button>
+    </div>
+  </div>
+</div>
+
+
 <script>
-const ACCT_ID = {{ acct.id }};
-let _matchBtId   = null;
-let _matchAmount = 0;
-let _excludeBtId = null;
-let _createBtId  = null;
-let _searchTimer = null;
+var ACCT_ID = {{ acct.id }};
+var _bulkIds         = new Set();
+var _matchBtId       = null;
+var _matchAmount     = 0;
+var _matchBtDate     = '';
+var _matchBtType     = '';
+var _excludeBtId     = null;
+var _createBtId      = null;
+var _selectedEntries = {};
+var _searchTimer     = null;
 
-// ── Auto-match ───────────────────────────────────────────────
+function applyFilter() {
+  var status = document.getElementById('filter-status').value;
+  var start  = document.getElementById('filter-start').value;
+  var end    = document.getElementById('filter-end').value;
+  var url    = new URL(window.location.href);
+  url.searchParams.set('status', status);
+  if (start) url.searchParams.set('start', start); else url.searchParams.delete('start');
+  if (end)   url.searchParams.set('end', end);     else url.searchParams.delete('end');
+  window.location.href = url.toString();
+}
+
+function setFilter(status) {
+  var url = new URL(window.location.href);
+  url.searchParams.set('status', status);
+  window.location.href = url.toString();
+}
+
+function reloadSoon() { setTimeout(function(){ window.location.reload(); }, 700); }
+
 async function runAutoMatch(acctId) {
-  showToast('Running auto-match…', 'info');
-  const res  = await fetch('/api/recon/auto-match', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({account_id: acctId})
-  });
-  const data = await res.json();
-  if (data.success) {
-    showToast(`Auto-matched ${data.matched} transaction(s)`, data.matched > 0 ? 'success' : 'info');
-    if (data.matched > 0) setTimeout(() => window.location.reload(), 700);
+  var btn  = document.getElementById('btn-auto-match');
+  var orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Matching...'; }
+  showToast('Running auto-match...', 'info');
+  try {
+    var res  = await fetch('/api/recon/auto-match', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({account_id: acctId})
+    });
+    var data = await res.json();
+    if (data.success) {
+      showToast(data.matched > 0 ? 'Matched ' + data.matched + ' transaction(s)' : 'No new matches found',
+                data.matched > 0 ? 'success' : 'info');
+      reloadSoon();
+    } else {
+      showToast('Error: ' + (data.error || 'unknown'), 'error');
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+  } catch(e) {
+    showToast('Network error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
   }
 }
 
-// ── Unmatch ──────────────────────────────────────────────────
 async function unmatch(btId) {
-  const res  = await fetch('/api/recon/unmatch', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({bank_transaction_id: btId})
-  });
-  const data = await res.json();
-  if (data.success) {
-    showToast('Unmatched', 'success');
-    setTimeout(() => window.location.reload(), 500);
-  }
+  try {
+    var res  = await fetch('/api/recon/unmatch', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({bank_transaction_id: parseInt(btId)})
+    });
+    var data = await res.json();
+    if (data.success) { showToast('Unmatched', 'success'); reloadSoon(); }
+    else showToast(data.error || 'Failed', 'error');
+  } catch(e) { showToast('Network error', 'error'); }
 }
 
-// ── Exclude ──────────────────────────────────────────────────
-function excludeTxn(btId) {
-  _excludeBtId = btId;
-  document.getElementById('exclude-notes').value = 'Bank fee';
+function excludeTxn(btn) {
+  _excludeBtId = parseInt(btn.dataset.btId);
+  document.getElementById('excl-notes').value = '';
   openModal('modal-exclude');
 }
 
 async function confirmExclude() {
-  const notes = document.getElementById('exclude-notes').value;
-  const res   = await fetch('/api/recon/exclude', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({bank_transaction_id: _excludeBtId, notes})
-  });
-  const data = await res.json();
-  if (data.success) {
-    showToast('Excluded', 'success');
-    closeModal('modal-exclude');
-    setTimeout(() => window.location.reload(), 500);
-  }
+  var notes = document.getElementById('excl-notes').value.trim();
+  try {
+    var res  = await fetch('/api/recon/exclude', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({bank_transaction_id: _excludeBtId, notes: notes})
+    });
+    var data = await res.json();
+    if (data.success) { closeModal('modal-exclude'); showToast('Excluded', 'success'); reloadSoon(); }
+    else showToast(data.error || 'Failed', 'error');
+  } catch(e) { showToast('Network error', 'error'); }
 }
 
-// ── Delete ───────────────────────────────────────────────────
-async function deleteTxn(btId) {
-  if (!confirm('Delete this bank transaction?')) return;
-  const res  = await fetch(`/api/recon/transaction/${btId}/delete`, {
-    method: 'POST', headers: {'Content-Type':'application/json'}
+function deleteTxn(btId) {
+  appConfirmDanger('Delete this transaction? This cannot be undone.', async function() {
+    try {
+      var res  = await fetch('/api/recon/transaction/' + btId + '/delete', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+      });
+      var data = await res.json();
+      if (data.success) { showToast('Deleted', 'success'); reloadSoon(); }
+      else showToast(data.error || 'Failed', 'error');
+    } catch(e) { showToast('Network error', 'error'); }
   });
-  const data = await res.json();
-  if (data.success) {
-    document.getElementById('txn-'+btId)?.remove();
-    showToast('Deleted', 'success');
-  }
 }
 
-// ── Manual Match Picker ──────────────────────────────────────
-function openMatchPicker(btId, amount, date) {
-  _matchBtId   = btId;
-  _matchAmount = amount;
-  document.getElementById('match-amount').textContent = amount.toFixed(2);
+function toggleSelectAll(checked) {
+  document.querySelectorAll('.bulk-cb').forEach(function(cb) {
+    cb.checked = checked;
+    toggleBulk(parseInt(cb.dataset.id), checked);
+  });
+}
+
+function toggleBulk(id, checked) {
+  if (checked) _bulkIds.add(id);
+  else         _bulkIds.delete(id);
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  var bar = document.getElementById('bulk-bar');
+  var lbl = document.getElementById('bulk-count');
+  if (bar) bar.style.display = _bulkIds.size > 0 ? 'flex' : 'none';
+  if (lbl) lbl.textContent = _bulkIds.size + ' selected';
+}
+
+function clearBulk() {
+  _bulkIds.clear();
+  document.querySelectorAll('.bulk-cb').forEach(function(cb){ cb.checked = false; });
+  var sa = document.getElementById('select-all');
+  if (sa) sa.checked = false;
+  updateBulkBar();
+}
+
+function openBulkExclude() {
+  if (!_bulkIds.size) return;
+  document.getElementById('bulk-excl-count').textContent = _bulkIds.size;
+  document.getElementById('bulk-excl-notes').value = '';
+  openModal('modal-bulk-exclude');
+}
+
+async function confirmBulkExclude() {
+  var notes = document.getElementById('bulk-excl-notes').value.trim();
+  var ids   = Array.from(_bulkIds);
+  try {
+    var res  = await fetch('/api/recon/bulk-exclude', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ids: ids, notes: notes})
+    });
+    var data = await res.json();
+    if (data.success) {
+      closeModal('modal-bulk-exclude');
+      showToast('Excluded ' + ids.length + ' transaction(s)', 'success');
+      reloadSoon();
+    } else showToast(data.error || 'Failed', 'error');
+  } catch(e) { showToast('Network error', 'error'); }
+}
+
+function openMatchPicker(btn) {
+  _matchBtId       = parseInt(btn.dataset.btId);
+  _matchAmount     = parseFloat(btn.dataset.amount) || 0;
+  _matchBtDate     = btn.dataset.date || '';
+  _matchBtType     = btn.dataset.type || '';
+  _selectedEntries = {};
+  document.getElementById('match-amount-display').textContent = _matchAmount.toFixed(2);
   document.getElementById('match-search').value = '';
+  document.getElementById('match-results').innerHTML = '';
+  document.getElementById('match-sel-bar').style.display = 'none';
   openModal('modal-match');
-  searchLedger(amount);  // seed with amount-based search
+  searchLedger();
 }
 
-function searchLedger(initialAmount) {
+function onSearchInput() {
   clearTimeout(_searchTimer);
-  _searchTimer = setTimeout(async () => {
-    const q   = document.getElementById('match-search').value;
-    const amt = initialAmount || _matchAmount;
-    const url = `/api/recon/ledger-search?acct_id=${ACCT_ID}&q=${encodeURIComponent(q)}&amount=${amt}`;
-    const res = await fetch(url);
-    const rows = await res.json();
-    renderMatchResults(rows);
-  }, 250);
+  _searchTimer = setTimeout(searchLedger, 300);
 }
 
-function renderMatchResults(rows) {
-  const div = document.getElementById('match-results');
-  if (!rows.length) {
-    div.innerHTML = '<p class="text-dim" style="text-align:center;padding:20px">No matching ledger entries found.</p>';
+async function searchLedger() {
+  var q   = (document.getElementById('match-search').value || '').trim();
+  var url = '/api/recon/ledger-search'
+    + '?acct_id=' + ACCT_ID
+    + '&amount='  + _matchAmount
+    + '&date='    + encodeURIComponent(_matchBtDate)
+    + '&q='       + encodeURIComponent(q)
+    + '&limit=60';
+  var el = document.getElementById('match-results');
+  el.innerHTML = '<p style="padding:12px;color:var(--muted)">Searching...</p>';
+  try {
+    var resp = await fetch(url);
+    var data = await resp.json();
+    var results = Array.isArray(data) ? data : (data.results || []);
+    var splits  = Array.isArray(data) ? [] : (data.splits || []);
+    renderResults(results, splits);
+  } catch(e) {
+    el.innerHTML = '<p style="padding:12px;color:var(--red)">Error loading results</p>';
+  }
+}
+
+function renderResults(singles, splits) {
+  var el   = document.getElementById('match-results');
+  var html = '';
+
+  if (splits && splits.length) {
+    splits.forEach(function(s) {
+      var idsJson  = JSON.stringify(s.ids);
+      var amtsJson = JSON.stringify(s.amounts);
+      var descJson = JSON.stringify(s.descriptions);
+      html += '<div style="padding:8px 16px;background:rgba(56,161,105,.08);border-bottom:1px solid var(--border)">'
+            + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+            + '<span class="badge" style="background:#38a169;color:#fff;font-size:10px">SPLIT GROUP</span>'
+            + '<strong>$' + s.total.toFixed(2) + '</strong>'
+            + '<span style="color:var(--muted);font-size:12px">' + s.ids.length + ' parts</span>'
+            + '<button class="btn btn-xs btn-primary" style="margin-left:auto"'
+            + ' onclick=\'selectSplitGroup(' + idsJson + ',' + amtsJson + ',' + descJson + ')\'>Select All Parts</button>'
+            + '</div>'
+            + '<div style="font-size:12px;color:var(--muted)">' + s.descriptions.join(', ') + '</div>'
+            + '</div>';
+    });
+    html += '<div style="padding:4px 16px 2px;font-size:11px;color:var(--muted);font-weight:600;background:var(--card-bg)">INDIVIDUAL ENTRIES</div>';
+  }
+
+  if (!singles.length) {
+    html += '<p style="padding:16px;text-align:center;color:var(--muted)">No matching entries found — try clearing the search or typing a vendor/description</p>';
+  } else {
+    singles.forEach(function(r) {
+      // Use abs_amount from server (= ABS(ledger.amount)) for comparison with bank amount
+      var amt      = typeof r.abs_amount !== 'undefined' ? r.abs_amount : Math.abs(parseFloat(r.amount) || 0);
+      var diff     = Math.abs(amt - _matchAmount);
+      var amtColor = diff <= 0.02 ? '#38a169' : diff <= 1.00 ? '#f59e0b' : 'var(--text)';
+
+      // Detect refund: expense column is negative
+      var isRefund  = (r.expense !== undefined && r.expense !== null && parseFloat(r.expense) < 0);
+      var isIncome  = (r.income  !== undefined && r.income  !== null && parseFloat(r.income)  > 0);
+      var descSafe  = (r.description || r.vendor || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+      var badges = '';
+      if (r.is_split_part) badges += '<span class="badge" style="background:#ed8936;color:#fff;font-size:10px;margin-right:4px">SPLIT</span>';
+      if (isRefund)        badges += '<span class="badge" style="background:#38a169;color:#fff;font-size:10px;margin-right:4px" title="Refund/return in expense column">REFUND</span>';
+      if (isIncome)        badges += '<span class="badge" style="background:#3182ce;color:#fff;font-size:10px;margin-right:4px">INCOME</span>';
+
+      html += '<label style="display:flex;gap:10px;align-items:flex-start;padding:8px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s" onmouseover="this.style.background=\'var(--hover)\'" onmouseout="this.style.background=\'\'">'
+            + '<input type="checkbox" class="match-cb" data-id="' + r.id + '" data-amount="' + amt + '" data-desc="' + descSafe + '"'
+            + ((_selectedEntries[r.id]) ? ' checked' : '') + ' onchange="toggleEntry(this)" style="margin-top:3px;flex-shrink:0">'
+            + '<span style="flex:1;min-width:0">'
+            + badges
+            + '<strong style="color:' + amtColor + '">$' + amt.toFixed(2) + '</strong>'
+            + (r.description ? ' &mdash; <span style="font-size:13px">' + r.description + '</span>' : '')
+            + (r.vendor && r.vendor !== r.description ? ' <span style="color:var(--muted);font-size:12px">(' + r.vendor + ')</span>' : '')
+            + (r.category    ? ' <span style="color:var(--muted);font-size:11px">[' + r.category + ']</span>' : '')
+            + (r.job_code    ? ' <span style="color:var(--muted);font-size:11px">' + r.job_code + '</span>' : '')
+            + (r.memo        ? '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + r.memo + '</div>' : '')
+            + '</span>'
+            + '<span style="color:var(--muted);font-size:12px;white-space:nowrap">' + (r.entry_date || '') + '</span>'
+            + '</label>';
+    });
+  }
+  el.innerHTML = html;
+}
+
+function toggleEntry(cb) {
+  var id  = cb.dataset.id;
+  var amt = parseFloat(cb.dataset.amount) || 0;
+  if (cb.checked) { _selectedEntries[id] = {id: id, amount: amt, description: cb.dataset.desc}; }
+  else            { delete _selectedEntries[id]; }
+  updateSelBar();
+}
+
+function selectSplitGroup(ids, amounts, descs) {
+  ids.forEach(function(id, i) {
+    _selectedEntries[id] = {id: id, amount: amounts[i], description: descs[i]};
+  });
+  updateSelBar();
+  document.querySelectorAll('.match-cb').forEach(function(cb) {
+    if (_selectedEntries[cb.dataset.id]) cb.checked = true;
+  });
+}
+
+function clearSelections() {
+  _selectedEntries = {};
+  document.querySelectorAll('.match-cb').forEach(function(cb){ cb.checked = false; });
+  updateSelBar();
+}
+
+function updateSelBar() {
+  var ids   = Object.keys(_selectedEntries);
+  var total = ids.reduce(function(s, id){ return s + (_selectedEntries[id].amount || 0); }, 0);
+  var bar   = document.getElementById('match-sel-bar');
+  var sumEl = document.getElementById('match-sel-summary');
+  var btn   = document.getElementById('btn-match-sel');
+  if (!bar) return;
+  if (!ids.length) {
+    bar.style.display = 'none';
+    if (btn) btn.disabled = true;
     return;
   }
-  div.innerHTML = `<table style="width:100%">
-    <thead><tr>
-      <th>Date</th><th>Description</th><th>Category</th>
-      <th style="text-align:right">Amount</th><th style="width:80px"></th>
-    </tr></thead>
-    <tbody>
-    ${rows.map(r => `
-      <tr>
-        <td class="mono text-dim" style="font-size:11px">${r.entry_date}</td>
-        <td style="font-size:12px">${r.description || '—'}${r.vendor ? '<br><span class="text-dim" style="font-size:10px">'+r.vendor+'</span>' : ''}</td>
-        <td style="font-size:11px" class="text-dim">${r.category || ''}${r.job_code ? ' · '+r.job_code : ''}</td>
-        <td style="text-align:right" class="mono">$${(+r.amount).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
-        <td><button class="btn btn-xs btn-primary" onclick="doMatch(${r.id})">Match</button></td>
-      </tr>
-    `).join('')}
-    </tbody>
-  </table>`;
-}
-
-async function doMatch(ledgerId) {
-  const res  = await fetch('/api/recon/match', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({bank_transaction_id: _matchBtId, ledger_id: ledgerId})
-  });
-  const data = await res.json();
-  if (data.success) {
-    showToast('Matched ✅', 'success');
-    closeModal('modal-match');
-    setTimeout(() => window.location.reload(), 500);
-  } else {
-    showToast(data.error || 'Match failed', 'error');
+  var diff = Math.abs(total - _matchAmount);
+  var ok   = diff <= 0.02;
+  bar.style.display    = 'flex';
+  bar.style.background = ok ? 'rgba(56,161,105,.12)' : 'rgba(237,137,54,.15)';
+  if (sumEl) {
+    var okHtml = ok ? ' <span style="color:#38a169">&#x2714; exact match</span>'
+                    : ' <span style="color:#ed8936">(diff $' + diff.toFixed(2) + ')</span>';
+    sumEl.innerHTML = ids.length + ' selected &mdash; <strong>$' + total.toFixed(2) + '</strong> of $' + _matchAmount.toFixed(2) + okHtml;
   }
+  if (btn) btn.disabled = !ok;
 }
 
-// ── Create Ledger Entry ──────────────────────────────────────
-function openCreateLedger(btId, desc, amount, date) {
-  _createBtId = btId;
-  document.getElementById('create-ledger-info').textContent =
-    `${desc} — $${parseFloat(amount).toFixed(2)} on ${date}`;
-  document.getElementById('cl-category').value = '';
-  document.getElementById('cl-job-code').value = '';
-  document.getElementById('cl-vendor').value = '';
-  document.getElementById('cl-notes').value = '';
-  openModal('modal-create-ledger');
+async function doMatchSelected() {
+  var ids = Object.keys(_selectedEntries).map(Number);
+  if (!ids.length) return;
+  var url  = ids.length === 1 ? '/api/recon/match' : '/api/recon/match-split';
+  var body = ids.length === 1
+    ? {bank_transaction_id: _matchBtId, ledger_entry_id: ids[0]}
+    : {bank_transaction_id: _matchBtId, ledger_entry_ids: ids};
+  try {
+    var res  = await fetch(url, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    var data = await res.json();
+    if (data.success) { closeModal('modal-match'); showToast('Matched!', 'success'); reloadSoon(); }
+    else showToast(data.error || 'Match failed', 'error');
+  } catch(e) { showToast('Network error', 'error'); }
+}
+
+function openCreateLedger(btn) {
+  _createBtId = parseInt(btn.dataset.btId);
+  var amount  = parseFloat(btn.dataset.amount) || 0;
+  document.getElementById('cr-desc').value     = btn.dataset.desc || '';
+  document.getElementById('cr-date').value     = btn.dataset.date || '';
+  document.getElementById('cr-amount').value   = (-Math.abs(amount)).toFixed(2);
+  document.getElementById('cr-category').value = '';
+  document.getElementById('cr-jobcode').value  = '';
+  document.getElementById('cr-vendor').value   = '';
+  document.getElementById('cr-memo').value     = '';
+  openModal('modal-create');
 }
 
 async function confirmCreateLedger() {
-  const res  = await fetch('/api/recon/create-ledger', {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      bank_transaction_id: _createBtId,
-      category:  document.getElementById('cl-category').value,
-      job_code:  document.getElementById('cl-job-code').value,
-      vendor:    document.getElementById('cl-vendor').value,
-      notes:     document.getElementById('cl-notes').value,
-    })
-  });
-  const data = await res.json();
-  if (data.success) {
-    showToast('Ledger entry created & matched ✅', 'success');
-    closeModal('modal-create-ledger');
-    setTimeout(() => window.location.reload(), 500);
-  } else {
-    showToast(data.error || 'Failed', 'error');
-  }
+  var amount = parseFloat(document.getElementById('cr-amount').value);
+  var date   = document.getElementById('cr-date').value;
+  if (!amount || !date) { showToast('Amount and date required', 'error'); return; }
+  var payload = {
+    bank_transaction_id: _createBtId,
+    account_id:   ACCT_ID,
+    description:  document.getElementById('cr-desc').value.trim(),
+    vendor:       document.getElementById('cr-vendor').value.trim(),
+    amount:       amount,
+    entry_date:   date,
+    memo:         document.getElementById('cr-memo').value.trim(),
+    category:     document.getElementById('cr-category').value.trim(),
+    job_code:     document.getElementById('cr-jobcode').value.trim()
+  };
+  try {
+    var res  = await fetch('/api/recon/create-ledger', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    var data = await res.json();
+    if (data.success) { closeModal('modal-create'); showToast('Created and matched', 'success'); reloadSoon(); }
+    else showToast(data.error || 'Failed', 'error');
+  } catch(e) { showToast('Network error', 'error'); }
 }
 </script>
 {% endblock %}

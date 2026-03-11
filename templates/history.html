@@ -49,8 +49,7 @@
           <th style="width:150px">When</th>
           <th style="width:110px">Table</th>
           <th style="width:70px">Action</th>
-          <th>Summary</th>
-          <th style="width:130px">Changes</th>
+          <th>Summary / Changes</th>
           <th style="width:80px">Revert</th>
         </tr>
       </thead>
@@ -70,22 +69,8 @@
               <span class="badge badge-red">DELETE</span>
             {% endif %}
           </td>
-          <td style="font-size:12px">{{ e.summary }}</td>
-          <td>
-            {% set old = e.old_data %}
-            {% set new = e.new_data %}
-            {% if e.action == 'UPDATE' and old and new %}
-            <button class="btn btn-outline btn-xs"
-                    onclick="showDiff({{ e.id }}, {{ old|tojson }}, {{ new|tojson }})">
-              🔍 View diff
-            </button>
-            {% elif e.action == 'DELETE' and old %}
-            <button class="btn btn-outline btn-xs"
-                    onclick="showDiff({{ e.id }}, {{ old|tojson }}, {})">
-              🔍 View
-            </button>
-            {% else %}—{% endif %}
-          </td>
+          <td style="font-size:12px;max-width:500px;word-break:break-word">{{ e.summary }}</td>
+
           <td>
             {% if e.action in ('DELETE', 'UPDATE') and e.old_data %}
             <button class="btn btn-outline btn-xs" id="revert-btn-{{ e.id }}"
@@ -98,7 +83,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="7" style="text-align:center;padding:40px" class="text-dim">
+          <td colspan="6" style="text-align:center;padding:40px" class="text-dim">
             No history entries found.
           </td>
         </tr>
@@ -110,32 +95,40 @@
 
 <!-- Pagination -->
 {% if pages > 1 %}
-<div class="flex gap-8" style="margin-top:14px;justify-content:center;align-items:center">
+{%- set ns = namespace(parts=[]) -%}
+{%- for k, v in request.args.items() -%}
+  {%- if k != "page" -%}{%- set ns.parts = ns.parts + [k+"="+v] -%}{%- endif -%}
+{%- endfor -%}
+{%- set qs_no_page = ns.parts|join("&") -%}
+<div style="margin-top:14px;display:flex;justify-content:center;align-items:center;gap:6px;flex-wrap:wrap">
   {% if page > 1 %}
-  <a href="?page={{ page-1 }}&table={{ table_f }}&action={{ action_f }}" class="btn btn-outline btn-sm">← Prev</a>
+    <a href="?page=1&{{ qs_no_page }}" class="btn btn-outline btn-sm" title="First page">«</a>
+    <a href="?page={{ page-1 }}&{{ qs_no_page }}" class="btn btn-outline btn-sm">← Prev</a>
+  {% else %}
+    <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">«</span>
+    <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">← Prev</span>
   {% endif %}
-  <span class="text-dim" style="font-size:12px">Page {{ page }} of {{ pages }}</span>
+  <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)">
+    Page
+    <input type="number" id="hist-page-jump" min="1" max="{{ pages }}" value="{{ page }}"
+           style="width:48px;text-align:center;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:11px"
+           onkeydown="if(event.key==='Enter'){var p=Math.max(1,Math.min({{ pages }},parseInt(this.value)||1)); window.location='?page='+p+'&{{ qs_no_page }}';}">
+    / {{ pages }}
+    <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:10px"
+            onclick="var p=Math.max(1,Math.min({{ pages }},parseInt(document.getElementById('hist-page-jump').value)||1)); window.location='?page='+p+'&{{ qs_no_page }}'; ">Go</button>
+  </span>
   {% if page < pages %}
-  <a href="?page={{ page+1 }}&table={{ table_f }}&action={{ action_f }}" class="btn btn-outline btn-sm">Next →</a>
+    <a href="?page={{ page+1 }}&{{ qs_no_page }}" class="btn btn-outline btn-sm">Next →</a>
+    <a href="?page={{ pages }}&{{ qs_no_page }}" class="btn btn-outline btn-sm" title="Last page">»</a>
+  {% else %}
+    <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">Next →</span>
+    <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">»</span>
   {% endif %}
 </div>
 {% endif %}
 
 
-<!-- ── Diff Modal ── -->
-<div class="modal-overlay" id="diffModal">
-  <div class="modal" style="max-width:640px">
-    <div class="modal-header">
-      <h3>🔍 Change Details</h3>
-      <button class="modal-close" onclick="closeModal('diffModal')">✕</button>
-    </div>
-    <div class="modal-body" id="diffContent" style="font-size:12px;max-height:420px;overflow-y:auto">
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeModal('diffModal')">Close</button>
-    </div>
-  </div>
-</div>
+
 
 <!-- ── Revert Confirm Modal ── -->
 <div class="modal-overlay" id="revertModal">
@@ -163,32 +156,6 @@
 {% block scripts %}
 <script>
 let pendingRevertId = null;
-
-function showDiff(id, oldData, newData) {
-  const container = document.getElementById('diffContent');
-  const allKeys   = new Set([...Object.keys(oldData || {}), ...Object.keys(newData || {})]);
-  const skip      = new Set(['updated_at', 'created_at']);
-
-  let html = '<table style="width:100%;border-collapse:collapse">';
-  html += '<tr style="background:var(--bg)"><th style="padding:4px 8px;text-align:left;font-size:11px;color:var(--text-dim)">Field</th><th style="padding:4px 8px;text-align:left;font-size:11px;color:var(--text-dim)">Before</th><th style="padding:4px 8px;text-align:left;font-size:11px;color:var(--text-dim)">After</th></tr>';
-
-  for (const key of [...allKeys].sort()) {
-    if (skip.has(key)) continue;
-    const ov = oldData?.[key];
-    const nv = newData?.[key];
-    const changed = JSON.stringify(ov) !== JSON.stringify(nv);
-    const bg = changed ? 'background:rgba(255,200,0,0.07)' : '';
-
-    html += `<tr style="${bg};border-bottom:1px solid var(--border)">
-      <td style="padding:4px 8px;font-weight:${changed?'700':'400'};font-size:11px">${key}</td>
-      <td style="padding:4px 8px;color:var(--red);font-size:11px;font-family:monospace">${ov != null ? ov : '—'}</td>
-      <td style="padding:4px 8px;color:var(--green);font-size:11px;font-family:monospace">${nv != null ? nv : '—'}</td>
-    </tr>`;
-  }
-  html += '</table>';
-  container.innerHTML = html;
-  openModal('diffModal');
-}
 
 function revert(id, action, table) {
   pendingRevertId = id;

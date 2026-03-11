@@ -108,10 +108,9 @@
               </td>
               <td class="dim" style="font-size:11px">{{ c.cert_filename or '—' }}</td>
               <td>
-                <form method="POST" action="/certs/{{ c.id }}/delete"
-                      onsubmit="return confirm('Remove this certificate?')">
-                  <button type="submit" class="btn btn-danger btn-xs">Del</button>
-                </form>
+                <form id="del-cert-{{ c.id }}" method="POST" action="/certs/{{ c.id }}/delete" style="display:none"></form>
+                <button type="button" class="btn btn-danger btn-xs"
+                        onclick="(async()=>{ if(await appConfirmDanger('Remove this certificate?','Delete Certificate?','Delete','🗑')) document.getElementById('del-cert-{{ c.id }}').submit(); })()">Del</button>
               </td>
             </tr>
             {% endfor %}

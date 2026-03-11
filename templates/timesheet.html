@@ -1,72 +1,20 @@
-<style>
-/* 
-  These styles make parts of the timesheet table "sticky" (stay in view while scrolling).
-  They only work if the parent container has overflow and a defined height.
-*/
+{% extends "base.html" %}
+{% block title %}Timesheet — {{ config.company_name or 'Construction Manager' }}{% endblock %}
+{% block topbar_title %}⏱ Timesheet{% endblock %}
+{% block breadcrumb %}<a href="/">Home</a> / Timesheet{% endblock %}
 
-/* Sticky table headers (the sort bar at top of table) */
-#ts-table thead tr th {
-  position: sticky;               /* Keeps the header row fixed relative to its scrolling parent */
-  top: 200;                         /* Sticks to the very top of the scroll container */
-  background: var(--surface);     /* Solid background so it doesn't show content through it */
-  z-index: 5;                     /* Higher z-index than rows so it stays on top */
-  box-shadow: 0 1px 0 var(--border); /* Subtle shadow line under header for visual separation */
-}
+{% block content %}
+{% macro sort_th(col, label, style='') %}
+{% set nd = 'asc' if (sort_col==col and sort_dir=='desc') else 'desc' %}
+<th style="{{ style }}cursor:pointer;user-select:none;white-space:nowrap"
+    onclick="sortBy('{{ col }}','{{ nd }}')">
+  {{ label }}<span style="font-size:9px;opacity:{{ '1' if sort_col==col else '0.3' }}">
+    {{ '▲' if (sort_col==col and sort_dir=='asc') else '▼' }}</span>
+</th>
+{% endmacro %}
 
-/* Sticky filter bar (search + filters + buttons) */
-.timesheet-filter-bar {
-  position: sticky;               /* Sticks to top of viewport/page (or parent) */
-  top: 0;                         /* Aligns to top (adjust if topbar overlaps) */
-  z-index: 10;                    /* Higher than table header so filter stays above it */
-  background: var(--bg);          /* Solid background to cover scrolling content */
-  padding-bottom: 8px;            /* Extra space below filter bar */
-  margin-bottom: 0 !important;    /* Overrides any default margin so no gap */
-}
 
-/* Sticky totals bar (hours/bill/cost/expenses/margin summary) */
-.timesheet-totals-bar {
-  position: sticky;               /* Sticks to bottom of its scroll container */
-  bottom: 0;                      /* Aligns to bottom */
-  z-index: 15;                    /* Same level as filter bar */
-  background: var(--bg);          /* Solid background */
-  padding-bottom: 8px;            /* Space above totals */
-  margin-bottom: 0 !important;    /* Overrides any default margin so no gap */
-}
-
-/* Sticky bar for visible table totals (sum of hours/bill/cost in current rows) */
-.table-totals-bar {
-  position: sticky;
-  top: var(--header-h);           /* Positions below topbar, above sorting bar */
-  z-index: 12;
-  background: var(--bg);
-  padding: 6px 14px;
-  font-size: 11px;
-  display: flex;
-  justify-content: flex-end;
-  gap: 30px;                      /* Aligns roughly with relevant columns */
-  border-bottom: 1px solid var(--border);
-}
-</style>
-
-{% extends "base.html" %}         <!-- Inherit layout, sidebar, topbar, etc. from base.html -->
-
-{% block title %}                  <!-- Set browser tab title -->
-Timesheet — {{ config.company_name or 'Construction Manager' }}
-{% endblock %}
-
-{% block topbar_title %}           <!-- Title shown in top navigation bar -->
-⏱ Timesheet
-{% endblock %}
-
-{% block breadcrumb %}             <!-- Breadcrumb navigation path -->
-<a href="/">Home</a> / Timesheet
-{% endblock %}
-
-{% block content %}                <!-- Main content area starts here -->
-
-<!-- ══════════════════════════════════════════
-     SUMMARY TILES (same style as Ledger YTD tiles)
-══════════════════════════════════════════ -->
+{# ── KPI tiles ─────────────────────────────────────────────── #}
 <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
   <div class="kpi-tile accent">
     <div class="kpi-label">Total Hours</div>
@@ -85,10 +33,10 @@ Timesheet — {{ config.company_name or 'Construction Manager' }}
     <div class="kpi-label">Expenses</div>
     <div class="kpi-value">${{ '{:,.0f}'.format(totals.total_expenses or 0) }}</div>
   </div>
-  <div class="kpi-tile {% if (totals.total_bill or 0) > 0 %}{% set margin = ((totals.total_bill - totals.total_cost) / totals.total_bill * 100) if totals.total_bill else 0 %}{% if margin >= 30 %}green{% elif margin >= 15 %}yellow{% else %}red{% endif %}{% endif %}">
+  {% set margin = ((totals.total_bill - totals.total_cost) / totals.total_bill * 100) if totals.total_bill else 0 %}
+  <div class="kpi-tile {% if totals.total_bill and totals.total_bill > 0 %}{% if margin >= 30 %}green{% elif margin >= 15 %}yellow{% else %}red{% endif %}{% endif %}">
     <div class="kpi-label">Margin</div>
     {% if totals.total_bill and totals.total_bill > 0 %}
-      {% set margin = ((totals.total_bill - totals.total_cost) / totals.total_bill * 100) %}
       <div class="kpi-value">{{ '{:.0f}'.format(margin) }}%</div>
     {% else %}
       <div class="kpi-value text-dim">—</div>
@@ -96,23 +44,19 @@ Timesheet — {{ config.company_name or 'Construction Manager' }}
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════
-     FILTERS / SEARCH / CONTROLS BAR
-══════════════════════════════════════════ -->
-<div class="card timesheet-filter-bar" style="margin-bottom:0">
+{# ── Filter bar ────────────────────────────────────────────── #}
+<div class="card" style="margin-bottom:10px">
   <div class="card-body" style="padding:10px 14px">
-    <!-- Form that submits GET params to filter the timesheet -->
     <form method="GET" id="filter-form" class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+      <input type="hidden" name="sort" value="{{ sort_col }}">
+      <input type="hidden" name="dir"  value="{{ sort_dir }}">
+      <input type="hidden" name="per_page" value="{{ per_page }}">
 
-      <!-- Search input (only in list view) -->
-      {% if view == 'list' %}
       <div class="form-group" style="flex:1;min-width:160px;margin:0">
         <label>Search</label>
         <input type="search" name="q" value="{{ q }}" placeholder="Name, job, description…" class="search">
       </div>
-      {% endif %}
 
-      <!-- Employee dropdown -->
       <div class="form-group" style="margin:0">
         <label>Employee</label>
         <select name="emp" style="min-width:130px" onchange="this.form.submit()">
@@ -123,7 +67,6 @@ Timesheet — {{ config.company_name or 'Construction Manager' }}
         </select>
       </div>
 
-      <!-- Job dropdown -->
       <div class="form-group" style="margin:0">
         <label>Job</label>
         <select name="job" style="min-width:120px" onchange="this.form.submit()">
@@ -134,8 +77,6 @@ Timesheet — {{ config.company_name or 'Construction Manager' }}
         </select>
       </div>
 
-      <!-- Date range (only in list view) -->
-      {% if view == 'list' %}
       <div class="form-group" style="margin:0">
         <label>From</label>
         <input type="date" name="from" value="{{ date_from }}" style="width:130px">
@@ -144,27 +85,13 @@ Timesheet — {{ config.company_name or 'Construction Manager' }}
         <label>To</label>
         <input type="date" name="to" value="{{ date_to }}" style="width:130px">
       </div>
-      {% endif %}
 
-      <!-- Submit & Clear -->
       <button type="submit" class="btn btn-primary btn-sm">Filter</button>
       {% if q or emp_filter or job_filter or date_from or date_to %}
-        <a href="/timesheet?view={{ view }}" class="btn btn-outline btn-sm">Clear</a>
+        <a href="/timesheet" class="btn btn-outline btn-sm">Clear</a>
       {% endif %}
 
-      <!-- Right-aligned action buttons -->
       <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end">
-        <!-- View toggle -->
-        <a href="/timesheet?view=list&emp={{ emp_filter }}&job={{ job_filter }}&from={{ date_from }}&to={{ date_to }}&q={{ q }}"
-           class="btn btn-sm {% if view=='list' %}btn-primary{% else %}btn-outline{% endif %}">
-          ☰ List
-        </a>
-        <a href="/timesheet?view=week{% if week_str %}&week={{ week_str }}{% endif %}&emp={{ emp_filter }}&job={{ job_filter }}"
-           class="btn btn-sm {% if view=='week' %}btn-primary{% else %}btn-outline{% endif %}">
-          📅 Week
-        </a>
-
-        <!-- Other actions -->
         <button type="button" class="btn btn-outline btn-sm" onclick="openModal('modal-bulk')">⚡ Bulk Entry</button>
         <a href="/timesheet/export?emp={{ emp_filter }}&job={{ job_filter }}&from={{ date_from }}&to={{ date_to }}" class="btn btn-outline btn-sm">⬇ Export CSV</a>
         <button type="button" class="btn btn-primary btn-sm" onclick="openAddRow()">+ Add Entry</button>
@@ -173,256 +100,516 @@ Timesheet — {{ config.company_name or 'Construction Manager' }}
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════
-     LIST VIEW TABLE
-══════════════════════════════════════════ -->
-{% if view == 'list' %}
-<div class="card" style="margin-top:0; flex: 1; display: flex; flex-direction: column; min-height: 400px;">
-  <div class="card-body no-pad" style="padding:0; flex: 1; display: flex; flex-direction: column;">
+{# ── Table ─────────────────────────────────────────────────── #}
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:center;gap:12px">
+    <span class="card-title">{{ total_count }} entr{{ 'y' if total_count==1 else 'ies' }}</span>
+    {# per-page selector #}
+    <select id="per-page-sel" style="font-size:11px;padding:2px 6px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:4px"
+            onchange="setPerPage(this.value)">
+      {% for n in [25, 50, 100, 200] %}
+      <option value="{{ n }}" {% if per_page==n %}selected{% endif %}>{{ n }} / page</option>
+      {% endfor %}
+    </select>
+  </div>
 
-    <!-- Scroll wrapper -->
-    <div style="
-      flex: 1;
-      overflow-y: auto;
-      overflow-x: auto;
-      position: relative;
-      min-height: 200px;
-    ">
-      <table id="ts-table" style="width:100%; border-collapse:collapse;">
-        <!-- Table header – sticky -->
-        <thead style="
-          position: sticky;
-          top: 0;
-          z-index: 10;
-          background: var(--bg);
-          box-shadow: 0 2px 0 var(--border);
-        ">
-          <tr>
-            <th style="width:30px"></th>
-           <!-- Macro to generate sortable column headers -->
-{% macro sort_th(col, label, style='') %}
-{% set next_dir = 'asc' if (sort_col == col and sort_dir == 'desc') else 'desc' %}
-{% set active = sort_col == col %}
-<th style="{{ style }}cursor:pointer;user-select:none;white-space:nowrap; background:var(--bg);"
-    onclick="location.href='{{ url_for('timesheet') }}?{{ request.query_string.decode() | replace('sort=' ~ sort_col, '') | replace('dir=' ~ sort_dir, '') | replace('&&','&') | replace('?&','?') }}&sort={{ col }}&dir={{ next_dir }}'">
-  {{ label }}
-  <span style="font-size:9px;opacity:{{ '1' if active else '0.3' }}">
-    {{ '▲' if (active and sort_dir == 'asc') else '▼' }}
-  </span>
-</th>
-{% endmacro %}
-          </tr>
-        </thead>
+  <div class="card-body no-pad" style="overflow-x:auto">
+    {% if rows or total_count %}
+    <table id="ts-table" style="min-width:980px">
+      <thead>
+        <tr>
+          <th style="width:28px"></th>
+          {{ sort_th('entry_date','Date') }}
+          {{ sort_th('job_code','Job #') }}
+          {{ sort_th('invoice_number','Invoice #') }}
+          {{ sort_th('work_type','Category') }}
+          <th>Description</th>
+          {{ sort_th('bill_amount','Bill','text-align:right;') }}
+          {{ sort_th('bill_rate','Rate','text-align:right;') }}
+          {{ sort_th('expenses','Expenses','text-align:right;') }}
+          {{ sort_th('cost_amount','Cost to Client','text-align:right;') }}
+          {{ sort_th('emp_name','Person') }}
+          {{ sort_th('hours','Hours','text-align:right;') }}
+          {{ sort_th('billable','Billable') }}
+          <th>Notes</th>
+          <th style="width:36px"></th>
+        </tr>
+      </thead>
+      <tbody id="ts-tbody">
 
-        <!-- Table body -->
-        <tbody id="ts-tbody">
-          <!-- Hidden add row -->
-          <tr id="add-row" style="display:none;background:var(--accent-dim)">
-            <!-- ... your add row content ... -->
-          </tr>
-
-          {% for row in rows %}
-          <tr id="row-{{ row.id }}" class="ts-row"
-              data-id="{{ row.id }}"
-              data-date="{{ row.entry_date }}"
-              data-emp="{{ row.emp_id }}"
-              data-job="{{ row.job_code }}"
-              data-hours="{{ row.hours }}"
-              data-bill-rate="{{ row.bill_rate }}"
-              data-cost-rate="{{ row.cost_rate }}"
-              data-expenses="{{ row.expenses }}"
-              data-desc="{{ row.description }}"
-              data-work-type="{{ row.work_type or '' }}"
-              data-billable="{{ row.billable or 'Billable' }}">
-
-            <td>
-              <input type="checkbox"
-                     class="row-select-checkbox"
-                     data-row-id="{{ row.id }}"
-                     style="appearance:none; width:16px; height:16px; border:1px solid var(--text-dim); border-radius:3px; background:var(--bg); cursor:pointer; accent-color:var(--accent); margin:0;"
-                     title="Select this row's data" />
-            </td>
-
-            <td>
-              <span class="editable mono" data-field="entry_date" data-id="{{ row.id }}">
-                {{ row.entry_date }}
-              </span>
-            </td>
-
-            <td>
-              <span style="font-size:12px">{{ row.emp_name or row.person_label or '—' }}</span>
-            </td>
-
-            <td>
-              <span class="editable" data-field="job_code" data-id="{{ row.id }}"
-                    data-type="list" data-list="job-list">
-                {% if row.job_code %}
-                  <span class="badge badge-blue">{{ row.job_code }}</span>
-                {% else %}
-                  <span class="text-dim">—</span>
-                {% endif %}
-              </span>
-            </td>
-
-            <td>
-              <span class="editable text-dim" data-field="work_type" data-id="{{ row.id }}"
-                    data-type="list" data-list="work-type-list" style="font-size:11px">
-                {{ row.work_type or '—' }}
-              </span>
-            </td>
-
-            <td>
-              <span class="editable" data-field="billable" data-id="{{ row.id }}"
-                    data-type="select" data-options="Billable|Non-Billable|GC">
-                <span class="badge badge-{% if row.billable == 'Non-Billable' %}gray{% elif row.billable == 'GC' %}yellow{% else %}green{% endif %}"
-                      style="font-size:9px">{{ row.billable or 'Billable' }}</span>
-              </span>
-            </td>
-
-            <td style="text-align:right">
-              <span class="editable mono" data-field="hours" data-id="{{ row.id }}">
-                {{ '{:.2f}'.format(row.hours) }}
-              </span>
-            </td>
-
-            <td style="text-align:right">
-              <span class="editable mono text-dim" data-field="bill_rate" data-id="{{ row.id }}"
-                    style="font-size:11px">
-                ${{ '{:.2f}'.format(row.bill_rate) }}
-              </span>
-            </td>
-
-            <td style="text-align:right">
-              <span class="editable mono text-dim" data-field="cost_rate" data-id="{{ row.id }}"
-                    style="font-size:11px">
-                ${{ '{:.2f}'.format(row.cost_rate) }}
-              </span>
-            </td>
-
-            <td style="text-align:right">
-              <span class="mono text-green" style="font-weight:600">
-                ${{ '{:,.2f}'.format(row.bill_amount) }}
-              </span>
-            </td>
-
-            <td style="text-align:right">
-              <span class="mono text-red" style="font-weight:600">
-                ${{ '{:,.2f}'.format(row.cost_amount) }}
-              </span>
-            </td>
-
-            <td style="text-align:right">
-              <span class="editable mono text-dim" data-field="expenses" data-id="{{ row.id }}"
-                    style="font-size:11px">
-                {% if row.expenses %}${{ '{:.2f}'.format(row.expenses) }}{% else %}—{% endif %}
-              </span>
-            </td>
-
-            <td>
-              <span class="editable text-dim" data-field="description" data-id="{{ row.id }}"
-                    style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block"
-                    title="{{ row.description }}">
-                {{ row.description or '—' }}
-              </span>
-            </td>
-
-            <td>
-              <button class="btn btn-danger btn-xs"
-                      onclick="deleteRow({{ row.id }}, '{{ row.person_label|replace("'","") }}', '{{ row.entry_date }}')">
-                🗑
-              </button>
-            </td>
-          </tr>
-
-          <!-- Expand detail row -->
-          <tr id="expand-{{ row.id }}" style="display:none">
-            <td colspan="13" style="padding:10px 20px;background:var(--bg)">
-              <div class="grid-3" style="gap:16px;font-size:11px">
-                <div>
-                  <span class="text-dim">Invoice #</span><br>
-                  <span class="editable" data-field="invoice_number" data-id="{{ row.id }}">
-                    {{ row.invoice_number or '—' }}
-                  </span>
-                </div>
-                <div>
-                  <span class="text-dim">Notes</span><br>
-                  <span class="editable" data-field="notes" data-id="{{ row.id }}">
-                    {{ row.notes or '—' }}
-                  </span>
-                </div>
-                <div>
-                  <span class="text-dim">Margin</span><br>
-                  {% if row.bill_amount > 0 %}
-                    {% set m = ((row.bill_amount - row.cost_amount) / row.bill_amount * 100) %}
-                    <span class="{% if m >= 30 %}text-green{% elif m >= 15 %}text-yellow{% else %}text-red{% endif %}">
-                      {{ '{:.1f}'.format(m) }}%
-                    </span>
-                  {% else %}
-                    <span class="text-dim">—</span>
-                  {% endif %}
-                </div>
-                <div>
-                  <span class="text-dim">Row ID</span><br>
-                  <span class="mono text-dim">{{ row.id }}</span>
-                </div>
-                <div>
-                  <span class="text-dim">Job Description</span><br>
-                  <span>{{ row.job_desc or '—' }}</span>
-                </div>
+        {# hidden add-row #}
+        <tr id="add-row" style="display:none;background:var(--accent-dim)">
+          <td colspan="14" style="padding:10px 14px">
+            <div class="flex gap-8" style="flex-wrap:wrap;align-items:flex-end">
+              <div class="form-group" style="margin:0">
+                <label>Date</label>
+                <input type="date" id="ar-date" value="{{ today }}" style="width:130px">
               </div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+              <div class="form-group" style="margin:0">
+                <label>Employee</label>
+                <select id="ar-emp">
+                  <option value="">—</option>
+                  {% for e in employees %}
+                  <option value="{{ e.emp_id }}">{{ e.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Job</label>
+                <input id="ar-job" list="job-list" placeholder="Job code" style="width:110px">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Work Type</label>
+                <input id="ar-wtype" list="work-type-list" placeholder="Category" style="width:110px">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Billable</label>
+                <select id="ar-bill">
+                  <option>Billable</option><option>Non-Billable</option><option>GC</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Hours</label>
+                <input type="number" id="ar-hours" step="0.25" min="0" value="8" style="width:70px">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Bill Rate</label>
+                <input type="number" id="ar-brate" step="0.01" min="0" placeholder="0.00" style="width:80px">
+              </div>
+              <div class="form-group" style="margin:0">
+                <label>Cost Rate</label>
+                <input type="number" id="ar-crate" step="0.01" min="0" placeholder="0.00" style="width:80px">
+              </div>
+              <div class="form-group" style="margin:0;flex:1;min-width:120px">
+                <label>Description</label>
+                <input type="text" id="ar-desc" placeholder="Description">
+              </div>
+              <div class="flex gap-8" style="align-self:flex-end">
+                <button class="btn btn-primary btn-sm" onclick="submitAddRow()">Save</button>
+                <button class="btn btn-outline btn-sm" onclick="document.getElementById('add-row').style.display='none'">Cancel</button>
+              </div>
+            </div>
+          </td>
+        </tr>
 
-    <!-- Visible table totals (above sorting bar) -->
-    {% if rows %}
-    <div class="table-totals-bar">
-      <span class="text-green font-weight:600">
-        ${{ '{:,.2f}'.format(rows | map(attribute='bill_amount') | sum | default(0)) }}
+        {% for row in rows %}
+        <tr id="row-{{ row.id }}" class="ts-row"
+            data-id="{{ row.id }}"
+            data-date="{{ row.entry_date }}"
+            data-emp="{{ row.emp_id }}"
+            data-job="{{ row.job_code }}"
+            data-hours="{{ row.hours }}"
+            data-bill-rate="{{ row.bill_rate }}"
+            data-cost-rate="{{ row.cost_rate }}"
+            data-expenses="{{ row.expenses or 0 }}"
+            data-desc="{{ row.description or '' }}"
+            data-work-type="{{ row.work_type or '' }}"
+            data-billable="{{ row.billable or 'Billable' }}">
+
+          <td>
+            <input type="checkbox" class="row-select-checkbox" data-row-id="{{ row.id }}"
+                   style="appearance:none;width:16px;height:16px;border:1px solid var(--text-dim);border-radius:3px;background:var(--bg);cursor:pointer">
+          </td>
+          <td><span class="editable mono" data-field="entry_date" data-id="{{ row.id }}">{{ row.entry_date }}</span></td>
+          <td>
+            <span class="editable" data-field="job_code" data-id="{{ row.id }}" data-type="list" data-list="job-list">
+              {% if row.job_code %}<span class="badge badge-blue">{{ row.job_code }}</span>
+              {% else %}<span class="text-dim">—</span>{% endif %}
+            </span>
+          </td>
+          <td>
+            <span class="editable text-dim mono" data-field="invoice_number" data-id="{{ row.id }}" style="font-size:11px">
+              {{ row.invoice_number or '—' }}
+            </span>
+          </td>
+          <td>
+            <span class="editable text-dim" data-field="work_type" data-id="{{ row.id }}" data-type="list" data-list="work-type-list" style="font-size:11px">
+              {{ row.work_type or '—' }}
+            </span>
+          </td>
+          <td>
+            <span class="editable text-dim" data-field="description" data-id="{{ row.id }}"
+                  style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block"
+                  title="{{ row.description }}">{{ row.description or '—' }}</span>
+          </td>
+          <td style="text-align:right"><span class="mono text-green" style="font-weight:600">${{ '{:,.2f}'.format(row.bill_amount) }}</span></td>
+          <td style="text-align:right"><span class="editable mono text-dim" data-field="bill_rate" data-id="{{ row.id }}" style="font-size:11px">${{ '{:.2f}'.format(row.bill_rate) }}</span></td>
+          <td style="text-align:right">
+            <span class="editable mono text-dim" data-field="expenses" data-id="{{ row.id }}" style="font-size:11px">
+              {% if row.expenses %}${{ '{:.2f}'.format(row.expenses) }}{% else %}—{% endif %}
+            </span>
+          </td>
+          <td style="text-align:right"><span class="mono text-red" style="font-weight:600">${{ '{:,.2f}'.format(row.cost_amount) }}</span></td>
+          <td style="font-size:12px">{{ row.emp_name or row.person_label or '—' }}</td>
+          <td style="text-align:right"><span class="editable mono" data-field="hours" data-id="{{ row.id }}">{{ '{:.2f}'.format(row.hours) }}</span></td>
+          <td>
+            <span class="editable" data-field="billable" data-id="{{ row.id }}" data-type="select" data-options="Billable|Non-Billable|GC">
+              <span class="badge badge-{% if row.billable=='Non-Billable' %}gray{% elif row.billable=='GC' %}yellow{% else %}green{% endif %}" style="font-size:9px">
+                {{ row.billable or 'Billable' }}
+              </span>
+            </span>
+          </td>
+          <td style="max-width:180px">
+            <span class="editable text-dim" data-field="notes" data-id="{{ row.id }}"
+                  style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;max-width:180px"
+                  title="{{ row.notes or '' }}">{{ row.notes or '—' }}</span>
+          </td>
+          <td>
+            <button class="btn btn-danger btn-xs"
+                    onclick="deleteRow({{ row.id }}, '{{ (row.person_label or '')|replace("'","") }}', '{{ row.entry_date }}')">🗑</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {# ── Pagination — centered, matches ledger/history ── #}
+    {% if pages > 1 or total_count > 0 %}
+    <div class="flex gap-8" style="padding:8px 14px;justify-content:center;align-items:center;border-top:1px solid var(--border);flex-wrap:wrap">
+      {# Build qs without page param #}
+      {%- set ns = namespace(parts=[]) -%}
+      {%- for k, v in request.args.items() -%}
+        {%- if k != 'page' -%}{%- set ns.parts = ns.parts + [k+'='+v] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set qs_no_page = ns.parts|join('&') -%}
+
+      {# Summary on left of button cluster #}
+      <span class="text-dim" style="font-size:11px">
+        {{ (page-1)*per_page + 1 }}–{{ [page*per_page, total_count]|min }} of {{ total_count }}
+        &nbsp;·&nbsp; {{ '{:,.1f}'.format(totals.total_hours or 0) }}h
+        &nbsp;·&nbsp; <span class="text-green">${{ '{:,.0f}'.format(totals.total_bill or 0) }}</span>
+        &nbsp;·&nbsp; <span class="text-red">${{ '{:,.0f}'.format(totals.total_cost or 0) }}</span>
       </span>
-      <span class="text-red font-weight:600" style="margin-right: 280px;">
-        ${{ '{:,.2f}'.format(rows | map(attribute='cost_amount') | sum | default(0)) }}
-      </span>
-    </div>
-    {% endif %}
 
-    <!-- Pagination & summary -->
-    {% if rows %}
-    <div class="flex gap-12" style="padding:10px 14px;border-top:1px solid var(--border);font-size:11px">
-      <span class="text-dim">Showing {{ rows|length }} of {{ total_count }}</span>
-      <span>Hours: <strong>{{ '{:,.1f}'.format(totals.total_hours or 0) }}</strong></span>
-      <span class="text-green">Bill: ${{ '{:,.2f}'.format(totals.total_bill or 0) }}</span>
-      <span class="text-red">Cost: ${{ '{:,.2f}'.format(totals.total_cost or 0) }}</span>
-    </div>
-    {% endif %}
-
-    {% if pages > 1 %}
-    <div class="flex gap-8" style="padding:10px 14px;justify-content:center;border-top:1px solid var(--border)">
+      {# First #}
       {% if page > 1 %}
-        <a href="?view=list&page={{ page-1 }}&emp={{ emp_filter }}&job={{ job_filter }}&from={{ date_from }}&to={{ date_to }}&q={{ q }}" class="btn btn-outline btn-sm">← Prev</a>
+        <a href="?page=1&{{ qs_no_page }}" class="btn btn-outline btn-sm" title="First page">«</a>
+        <a href="?page={{ page-1 }}&{{ qs_no_page }}" class="btn btn-outline btn-sm">← Prev</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">«</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">← Prev</span>
       {% endif %}
-      <span class="text-dim">Page {{ page }} / {{ pages }}</span>
+
+      {# Page jump #}
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)">
+        Page
+        <input type="number" id="ts-page-jump" min="1" max="{{ pages }}" value="{{ page }}"
+               style="width:48px;text-align:center;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--input-bg,var(--bg));color:var(--text);font-size:11px"
+               onkeydown="if(event.key==='Enter'){var p=Math.max(1,Math.min({{ pages }},parseInt(this.value)||1));window.location='?page='+p+'&{{ qs_no_page }}';}">
+        / {{ pages }}
+        <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:10px"
+                onclick="var p=Math.max(1,Math.min({{ pages }},parseInt(document.getElementById('ts-page-jump').value)||1));window.location='?page='+p+'&{{ qs_no_page }}';">Go</button>
+      </span>
+
+      {# Next / Last #}
       {% if page < pages %}
-        <a href="?view=list&page={{ page+1 }}&emp={{ emp_filter }}&job={{ job_filter }}&from={{ date_from }}&to={{ date_to }}&q={{ q }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ page+1 }}&{{ qs_no_page }}" class="btn btn-outline btn-sm">Next →</a>
+        <a href="?page={{ pages }}&{{ qs_no_page }}" class="btn btn-outline btn-sm" title="Last page">»</a>
+      {% else %}
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">Next →</span>
+        <span class="btn btn-outline btn-sm" style="opacity:.35;cursor:default">»</span>
       {% endif %}
     </div>
-    {% elif not rows %}
+    {% endif %}
+
+    {% else %}
     <div class="empty-state">
       <div class="icon">⏱</div>
       <p>No timesheet entries{% if emp_filter or job_filter or date_from %} matching filters{% endif %}.</p>
       <button class="btn btn-primary mt-8" onclick="openAddRow()">+ Add First Entry</button>
     </div>
     {% endif %}
-
   </div>
 </div>
-{% endif %}
 
-<!-- Week view, modals, datalists, scripts remain as in your original -->
 
-<!-- ... your week view, bulk modal, week-entry modal, datalists, and full scripts block unchanged ... -->
 
+{# ── Bulk entry modal ─────────────────────────────── #}
+<div id="modal-bulk" class="modal-overlay">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-header">
+      <h3>⚡ Bulk Entry</h3>
+      <button onclick="closeModal('modal-bulk')" class="modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="bulk-date" value="{{ today }}">
+      </div>
+      <div class="form-group">
+        <label>Job</label>
+        <input id="bulk-job" list="job-list" placeholder="Job code">
+      </div>
+      <div class="form-group">
+        <label>Work Type</label>
+        <input id="bulk-wtype" list="work-type-list" placeholder="Category">
+      </div>
+      <div class="form-group">
+        <label>Billable</label>
+        <select id="bulk-bill">
+          <option>Billable</option><option>Non-Billable</option><option>GC</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" id="bulk-desc" placeholder="Optional">
+      </div>
+      <div id="bulk-rows" style="margin-top:12px">
+        {% for e in employees %}
+        <div class="flex gap-8" style="margin-bottom:6px;align-items:center">
+          <span style="flex:1;font-size:12px">{{ e.name }}</span>
+          <input type="number" step="0.25" min="0" placeholder="hrs"
+                 style="width:70px" class="bulk-hrs" data-emp="{{ e.emp_id }}" data-name="{{ e.name }}">
+          <input type="number" step="0.01" min="0" placeholder="$/hr"
+                 style="width:70px" class="bulk-brate" data-emp="{{ e.emp_id }}">
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('modal-bulk')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitBulk()">Save Bulk</button>
+    </div>
+  </div>
+</div>
+
+{# datalists #}
+<datalist id="job-list">{% for j in all_jobs %}<option value="{{ j }}">{% endfor %}</datalist>
+<datalist id="work-type-list">{% for w in all_work_types %}<option value="{{ w }}">{% endfor %}</datalist>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Sort helper ──────────────────────────────────────────────
+function sortBy(col, dir) {
+  const u = new URL(window.location.href);
+  u.searchParams.set('sort', col);
+  u.searchParams.set('dir', dir);
+  u.searchParams.set('page', 1);
+  window.location.href = u.toString();
+}
+
+function setPerPage(n) {
+  const u = new URL(window.location.href);
+  u.searchParams.set('per_page', n);
+  u.searchParams.set('page', 1);
+  window.location.href = u.toString();
+}
+
+// ── Add row ──────────────────────────────────────────────────
+function openAddRow() {
+  const r = document.getElementById('add-row');
+  r.style.display = '';
+  // Move to top of tbody
+  document.getElementById('ts-tbody').prepend(r);
+  document.getElementById('ar-date').focus();
+}
+
+async function submitAddRow() {
+  const data = {
+    entry_date : document.getElementById('ar-date').value,
+    emp_id     : document.getElementById('ar-emp').value,
+    job_code   : document.getElementById('ar-job').value,
+    work_type  : document.getElementById('ar-wtype').value,
+    billable   : document.getElementById('ar-bill').value,
+    hours      : document.getElementById('ar-hours').value,
+    bill_rate  : document.getElementById('ar-brate').value,
+    cost_rate  : document.getElementById('ar-crate').value,
+    description: document.getElementById('ar-desc').value,
+  };
+  if (!data.entry_date) { showToast('Date is required', 'error'); return; }
+  const r = await fetch('/timesheet/new', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data)
+  });
+  const d = await r.json();
+  if (d.success || d.id) { location.reload(); }
+  else showToast('Save failed: ' + (d.error || 'Unknown'), 'error');
+}
+
+// ── Delete ───────────────────────────────────────────────────
+async function deleteRow(id, name, date) {
+  if (!await appConfirmDanger(`Delete entry for ${name} on ${date}?`, 'Delete Entry?', 'Delete', '🗑')) return;
+  const r = await fetch(`/timesheet/${id}/delete`, {method:'POST'});
+  const d = await r.json();
+  if (d.success) {
+    document.getElementById('row-'+id)?.remove();
+    showToast('Entry deleted', 'success');
+  } else showToast('Delete failed', 'error');
+}
+
+// ── Bulk entry ───────────────────────────────────────────────
+async function submitBulk() {
+  const entries = [];
+  document.querySelectorAll('.bulk-hrs').forEach(inp => {
+    const hrs = parseFloat(inp.value);
+    if (!hrs || hrs <= 0) return;
+    const emp = inp.dataset.emp;
+    const brateEl = document.querySelector(`.bulk-brate[data-emp="${emp}"]`);
+    entries.push({
+      entry_date : document.getElementById('bulk-date').value,
+      emp_id     : emp,
+      job_code   : document.getElementById('bulk-job').value,
+      work_type  : document.getElementById('bulk-wtype').value,
+      billable   : document.getElementById('bulk-bill').value,
+      description: document.getElementById('bulk-desc').value,
+      hours      : hrs,
+      bill_rate  : parseFloat(brateEl?.value || 0),
+    });
+  });
+  if (!entries.length) { showToast('No hours entered', 'error'); return; }
+  const r = await fetch('/timesheet/bulk', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({entries})
+  });
+  const d = await r.json();
+  if (d.success) { closeModal('modal-bulk'); location.reload(); }
+  else showToast('Error: ' + (d.error || 'Unknown'), 'error');
+}
+
+// ── Update row in-place after patch (no full reload) ─────────
+function _updateRowFromPatch(id, row) {
+  if (!row) { location.reload(); return; }
+  _activeEdit = null;
+  const tr = document.getElementById(`row-${id}`);
+  if (!tr) { location.reload(); return; }
+
+  // Map DB field → editable span content updater
+  const fmt2 = v => parseFloat(v||0).toFixed(2);
+  const fmtMoney = v => '$' + parseFloat(v||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  const fieldMap = {
+    entry_date:     s => s.textContent = row.entry_date || '',
+    job_code:       s => s.innerHTML = row.job_code ? `<span class="badge badge-blue">${row.job_code}</span>` : '<span class="text-dim">—</span>',
+    invoice_number: s => s.textContent = row.invoice_number || '—',
+    work_type:      s => s.textContent = row.work_type || '—',
+    description:    s => { s.textContent = row.description || '—'; s.title = row.description || ''; },
+    bill_rate:      s => s.textContent = '$' + fmt2(row.bill_rate),
+    cost_rate:      s => s.textContent = '$' + fmt2(row.cost_rate),
+    expenses:       s => s.textContent = row.expenses ? '$' + fmt2(row.expenses) : '—',
+    hours:          s => s.textContent = fmt2(row.hours),
+    billable:       s => {
+      const cls = row.billable==='Non-Billable' ? 'gray' : row.billable==='GC' ? 'yellow' : 'green';
+      s.innerHTML = `<span class="badge badge-${cls}" style="font-size:9px">${row.billable||'Billable'}</span>`;
+    },
+    person_label:   s => s.textContent = row.person_label || '—',
+    notes:          s => { s.textContent = row.notes || '—'; s.title = row.notes || ''; },
+  };
+
+  tr.querySelectorAll('.editable').forEach(span => {
+    const field = span.dataset.field;
+    if (fieldMap[field]) fieldMap[field](span);
+  });
+
+  // Update computed (non-editable) cells: bill_amount, cost_amount
+  const billCell = tr.querySelector('.mono.text-green');
+  if (billCell) billCell.textContent = fmtMoney(row.bill_amount);
+  const costCell = tr.querySelector('.mono.text-red');
+  if (costCell) costCell.textContent = fmtMoney(row.cost_amount);
+}
+
+// ── Inline editing (editable spans) ──────────────────────────
+let _activeEdit = null;  // track the currently-open editable span
+
+function _closeActiveEdit(restore) {
+  if (!_activeEdit) return;
+  const { span, orig } = _activeEdit;
+  _activeEdit = null;
+  if (restore) span.innerHTML = orig;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Click anywhere outside an active edit = cancel it
+  document.addEventListener('mousedown', function(e) {
+    if (_activeEdit && !_activeEdit.span.contains(e.target)) {
+      _closeActiveEdit(true);  // cancel without saving
+    }
+  });
+
+  document.querySelectorAll('.editable').forEach(el => {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', function(e) {
+      e.stopPropagation();
+      // If this span already has an open input, ignore
+      if (_activeEdit && _activeEdit.span === this) return;
+      // Close any previously-open edit without saving
+      _closeActiveEdit(true);
+
+      const id    = this.dataset.id;
+      const field = this.dataset.field;
+      const type  = this.dataset.type || 'text';
+      const cur   = this.textContent.trim().replace(/^—$/, '').replace(/^\$/, '');
+      const orig  = this.innerHTML;
+      _activeEdit = { span: this, orig };
+
+      let inp;
+      if (type === 'select') {
+        inp = document.createElement('select');
+        inp.style.cssText = 'width:100%;padding:2px 4px;font-size:inherit;background:var(--card-bg);color:var(--text);border:1px solid var(--accent);border-radius:3px';
+        (this.dataset.options || '').split('|').forEach(opt => {
+          const o = document.createElement('option');
+          o.value = opt; o.textContent = opt;
+          if (opt === cur) o.selected = true;
+          inp.appendChild(o);
+        });
+        // For <select>: save on 'change', allow blur only if change already fired
+        let _changed = false;
+        inp.addEventListener('change', async () => {
+          _changed = true;
+          const val = inp.value;
+          _activeEdit = null;
+          const r = await fetch(`/api/timesheet/${id}/patch`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({field: field, value: val})
+          });
+          const d = await r.json();
+          if (d.success) _updateRowFromPatch(id, d.row);
+          else { this.innerHTML = orig; showToast('Save failed', 'error'); }
+        });
+        inp.addEventListener('blur', () => {
+          // blur without change = user pressed Escape or clicked away → restore
+          if (!_changed) { _activeEdit = null; this.innerHTML = orig; }
+        });
+        inp.addEventListener('keydown', ev => {
+          if (ev.key === 'Escape') { _activeEdit = null; this.innerHTML = orig; }
+        });
+      } else {
+        inp = document.createElement(type === 'list' ? 'input' : 'input');
+        if (type === 'list') {
+          inp.setAttribute('list', this.dataset.list || '');
+        } else {
+          inp.type = field.includes('date') ? 'date'
+                   : (field === 'hours' || field.includes('rate') || field === 'expenses') ? 'number'
+                   : 'text';
+          if (inp.type === 'number') inp.step = '0.01';
+        }
+        inp.value = cur;
+        inp.style.cssText = 'width:100%;padding:2px 4px;font-size:inherit;background:var(--card-bg);color:var(--text);border:1px solid var(--accent);border-radius:3px';
+
+        const save = async () => {
+          if (_activeEdit === null) return;  // already cancelled
+          const val = inp.value;
+          _activeEdit = null;
+          const r = await fetch(`/api/timesheet/${id}/patch`, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({field: field, value: val})
+          });
+          const d = await r.json();
+          if (d.success) _updateRowFromPatch(id, d.row);
+          else { this.innerHTML = orig; showToast('Save failed', 'error'); }
+        };
+        inp.addEventListener('blur', save);
+        inp.addEventListener('keydown', ev => {
+          if (ev.key === 'Enter') inp.blur();
+          if (ev.key === 'Escape') { _activeEdit = null; this.innerHTML = orig; inp.removeEventListener('blur', save); }
+        });
+      }
+
+      this.innerHTML = '';
+      this.appendChild(inp);
+      // Use requestAnimationFrame to avoid the click that opened the edit immediately triggering blur
+      requestAnimationFrame(() => inp.focus());
+    });
+  });
+});
+</script>
 {% endblock %}

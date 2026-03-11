@@ -12,6 +12,7 @@
   </div>
   <form method="GET" class="flex gap-8" style="margin-left:auto;align-items:center">
     <select name="year" onchange="this.form.submit()" style="min-width:80px">
+      <option value="all" {% if year=='all' %}selected{% endif %}>All Years</option>
       {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
     </select>
     <button class="btn btn-outline btn-sm" onclick="window.print();return false">🖨 Print</button>
@@ -20,11 +21,11 @@
 
 <!-- YTD KPI Tiles -->
 <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:16px">
-  <div class="kpi-tile green"><div class="kpi-label">YTD Revenue</div><div class="kpi-value">${{ '{:,.0f}'.format(ytd_rev) }}</div></div>
-  <div class="kpi-tile"><div class="kpi-label">YTD Expenses</div><div class="kpi-value">${{ '{:,.0f}'.format(ytd_exp) }}</div></div>
-  <div class="kpi-tile"><div class="kpi-label">YTD Payroll</div><div class="kpi-value">${{ '{:,.0f}'.format(ytd_pay) }}</div></div>
+  <div class="kpi-tile green"><div class="kpi-label">{% if year == 'all' %}Total{% else %}YTD{% endif %} Revenue</div><div class="kpi-value">${{ '{:,.0f}'.format(ytd_rev) }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">{% if year == 'all' %}Total{% else %}YTD{% endif %} Expenses</div><div class="kpi-value">${{ '{:,.0f}'.format(ytd_exp) }}</div></div>
+  <div class="kpi-tile"><div class="kpi-label">{% if year == 'all' %}Total{% else %}YTD{% endif %} Payroll</div><div class="kpi-value">${{ '{:,.0f}'.format(ytd_pay) }}</div></div>
   <div class="kpi-tile {% if ytd_profit >= 0 %}green{% else %}red{% endif %}">
-    <div class="kpi-label">YTD Net Profit</div>
+    <div class="kpi-label">{% if year == 'all' %}Total{% else %}YTD{% endif %} Net Profit</div>
     <div class="kpi-value {% if ytd_profit >= 0 %}text-green{% else %}text-red{% endif %}">${{ '{:,.0f}'.format(ytd_profit) }}</div>
   </div>
   <div class="kpi-tile {% if ytd_margin >= 0 %}green{% else %}red{% endif %}">
@@ -35,20 +36,20 @@
 
 <!-- Chart -->
 <div class="card" style="margin-bottom:16px">
-  <div class="card-header"><span class="card-title">Monthly Revenue vs Expenses</span></div>
+  <div class="card-header"><span class="card-title">{% if year == 'all' %}Yearly{% else %}Monthly{% endif %} Revenue vs Expenses</span></div>
   <div class="card-body" style="height:220px;position:relative">
     <canvas id="plChart"></canvas>
   </div>
 </div>
 
-<!-- Monthly Table -->
+<!-- Monthly / Yearly Table -->
 <div class="card" style="margin-bottom:16px">
-  <div class="card-header"><span class="card-title">Monthly Breakdown</span></div>
+  <div class="card-header"><span class="card-title">{% if year == 'all' %}All-Years Breakdown{% else %}Monthly Breakdown{% endif %}</span></div>
   <div class="card-body no-pad">
     <table>
       <thead>
         <tr>
-          <th>Month</th>
+          <th>{% if year == 'all' %}Year{% else %}Month{% endif %}</th>
           <th style="text-align:right">Revenue</th>
           <th style="text-align:right">Expenses</th>
           <th style="text-align:right">Payroll</th>

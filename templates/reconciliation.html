@@ -22,7 +22,18 @@
             — <span class="badge badge-blue" style="font-size:9px">{{ acct.account_type }}</span>
           </div>
         </div>
-        <a href="/reconciliation/{{ acct.id }}" class="btn btn-primary btn-sm">Open →</a>
+        <div class="flex gap-4">
+          <button class="btn btn-outline btn-sm"
+                  data-id="{{ acct.id }}"
+                  data-name="{{ acct.account_name | e }}"
+                  data-type="{{ acct.account_type | e }}"
+                  data-inst="{{ (acct.institution_name or '') | e }}"
+                  data-last4="{{ (acct.last_four or '') | e }}"
+                  data-bal="{{ acct.current_balance or 0 }}"
+                  data-notes="{{ (acct.notes or '') | e }}"
+                  onclick="editBankAcct(this)">✏️</button>
+          <a href="/reconciliation/{{ acct.id }}" class="btn btn-primary btn-sm">Open →</a>
+        </div>
       </div>
 
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:11px">
@@ -77,4 +88,67 @@
   </div>
 </div>
 {% endif %}
+
+
+<!-- ── Bank Account Edit Modal (mirrors settings.html) ── -->
+<div class="modal-overlay" id="modal-bank-acct">
+  <div class="modal" style="max-width:450px">
+    <div class="modal-header">
+      <h3 id="bank-modal-title">Edit Bank Account</h3>
+      <button class="modal-close" onclick="closeModal('modal-bank-acct')">×</button>
+    </div>
+    <div class="modal-body">
+      <form action="/settings/bank-account" method="POST" class="form-grid" style="grid-template-columns:1fr 1fr">
+        <input type="hidden" name="id" id="bank-acct-id">
+        <div class="form-group full">
+          <label>Account Name <span class="req">*</span></label>
+          <input type="text" name="account_name" id="bank-acct-name" placeholder="Operating Checking" required>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select name="account_type" id="bank-acct-type">
+            <option>Checking</option>
+            <option>Savings</option>
+            <option>CreditCard</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Institution</label>
+          <input type="text" name="institution_name" id="bank-acct-inst" placeholder="Chase Bank">
+        </div>
+        <div class="form-group">
+          <label>Last 4 Digits</label>
+          <input type="text" name="last_four" id="bank-acct-last4" maxlength="4" placeholder="1234">
+        </div>
+        <div class="form-group">
+          <label>Current Balance</label>
+          <input type="number" step="0.01" name="current_balance" id="bank-acct-bal" value="0.00">
+        </div>
+        <div class="form-group full">
+          <label>Notes</label>
+          <textarea name="notes" id="bank-acct-notes" rows="2"></textarea>
+        </div>
+        <div class="form-group full">
+          <button type="submit" class="btn btn-primary">💾 Save Account</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% block scripts %}{% endblock %}
+<script>
+function editBankAcct(btn) {
+  const d = btn.dataset;
+  document.getElementById('bank-modal-title').textContent = 'Edit Bank Account';
+  document.getElementById('bank-acct-id').value    = d.id    || '';
+  document.getElementById('bank-acct-name').value  = d.name  || '';
+  document.getElementById('bank-acct-type').value  = d.type  || 'Checking';
+  document.getElementById('bank-acct-inst').value  = d.inst  || '';
+  document.getElementById('bank-acct-last4').value = d.last4 || '';
+  document.getElementById('bank-acct-bal').value   = d.bal   || 0;
+  document.getElementById('bank-acct-notes').value = d.notes || '';
+  openModal('modal-bank-acct');
+}
+</script>
 {% endblock %}

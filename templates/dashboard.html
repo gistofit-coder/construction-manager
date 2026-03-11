@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Dashboard — {{ config.company_name or 'Construction Manager' }}{% endblock %}
-{% block topbar_title %}Dashboard{% endblock %}
+{% block topbar_title %}📊 Dashboard{% endblock %}
 {% block breadcrumb %}<a href="/">Home</a>{% endblock %}
 
 {% block content %}
@@ -26,10 +26,10 @@
     <div class="kpi-value">${{ '{:,.0f}'.format(outstanding_sum) }}</div>
     <div class="kpi-sub">{{ outstanding_count }} invoice{{ 's' if outstanding_count != 1 else '' }}</div>
   </div>
-  <div class="kpi-tile">
-    <div class="kpi-label">Active Jobs</div>
+  <div class="kpi-tile" style="cursor:pointer" onclick="location.href='/projects'">
+    <div class="kpi-label">Active Projects</div>
     <div class="kpi-value">{{ active_jobs }}</div>
-    <div class="kpi-sub">In progress</div>
+    <div class="kpi-sub"><a href="/projects" style="color:var(--text-dim)">In progress →</a></div>
   </div>
   {% if unmatched > 0 %}
   <div class="kpi-tile red">
@@ -137,8 +137,8 @@
 {% if jobs_health %}
 <div class="card" style="margin-bottom:16px">
   <div class="card-header">
-    <span class="card-title">🏗️ Active Jobs ({{ jobs_health|length }})</span>
-    <a href="/jobs" class="btn btn-outline btn-xs">All Jobs →</a>
+    <span class="card-title">🏗️ Active Projects ({{ jobs_health|length }})</span>
+    <a href="/projects" class="btn btn-outline btn-xs">All Projects →</a>
   </div>
   <div class="card-body no-pad">
     <table>

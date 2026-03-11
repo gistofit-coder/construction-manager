@@ -1,3 +1,4 @@
+{# report_categories.html  v1.0.1 – 2026-03-11 #}
 {% extends "base.html" %}
 {% block title %}Category Breakdown {{ year }} — {{ config.company_name or '' }}{% endblock %}
 {% block topbar_title %}🏷️ Category Breakdown{% endblock %}
@@ -7,6 +8,7 @@
   <h2 style="font-size:18px;font-weight:700">Spending by Category — {{ year }}</h2>
   <form method="GET" class="flex gap-8" style="margin-left:auto;flex-wrap:wrap;align-items:center">
     <select name="year" onchange="this.form.submit()">
+      <option value="all" {% if year=='all' %}selected{% endif %}>All Years</option>
       {% for y in years %}<option value="{{ y }}" {% if y==year %}selected{% endif %}>{{ y }}</option>{% endfor %}
     </select>
     <select name="job" onchange="this.form.submit()" style="min-width:130px">
